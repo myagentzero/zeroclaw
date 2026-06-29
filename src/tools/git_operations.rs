@@ -67,9 +67,10 @@ impl GitOperationsTool {
 
     /// Check if an operation is read-only
     fn is_read_only(&self, operation: &str) -> bool {
+        // branch is omitted: it can both list (read) and create (write) depending on args
         matches!(
             operation,
-            "status" | "diff" | "log" | "show" | "branch" | "rev-parse"
+            "status" | "diff" | "log" | "show" | "rev-parse"
         )
     }
 
@@ -304,41 +305,77 @@ impl GitOperationsTool {
 
     async fn git_branch(
         &self,
-        _args: serde_json::Value,
+        args: serde_json::Value,
         working_dir: &std::path::Path,
     ) -> anyhow::Result<ToolResult> {
-        let output = self
-            .run_git_command(
-                &["branch", "--format=%(refname:short)|%(HEAD)"],
-                working_dir,
-            )
-            .await?;
-
-        let mut branches = Vec::new();
-        let mut current = String::new();
-
-        for line in output.lines() {
-            if let Some((name, head)) = line.split_once('|') {
-                let is_current = head == "*";
-                if is_current {
-                    current = name.to_string();
-                }
-                branches.push(json!({
-                    "name": name,
-                    "current": is_current
-                }));
+        if let Some(name) = args.get("branch").and_then(|v| v.as_str()) {
+            // Branch creation is a write operation — check autonomy here since the operation-level
+            // gate skips "branch" to allow read-only listing without a security block.
+            if !self.security.can_act() {
+                return Ok(ToolResult {
+                    success: false,
+                    output: String::new(),
+                    error: Some(
+                        "Action blocked: branch creation requires higher autonomy level".into(),
+                    ),
+                });
             }
-        }
+            // Create a new branch
+            Self::validate_ref_name(name, "Branch")?;
+            let sanitized = self.sanitize_git_args(name)?;
+            if sanitized.len() != 1 {
+                anyhow::bail!("Invalid branch name");
+            }
+            let branch_name = &sanitized[0];
+            match self
+                .run_git_command(&["branch", branch_name], working_dir)
+                .await
+            {
+                Ok(_) => Ok(ToolResult {
+                    success: true,
+                    output: format!("Created branch: {branch_name}"),
+                    error: None,
+                }),
+                Err(e) => Ok(ToolResult {
+                    success: false,
+                    output: String::new(),
+                    error: Some(format!("Branch creation failed: {e}")),
+                }),
+            }
+        } else {
+            let output = self
+                .run_git_command(
+                    &["branch", "--format=%(refname:short)|%(HEAD)"],
+                    working_dir,
+                )
+                .await?;
 
-        Ok(ToolResult {
-            success: true,
-            output: serde_json::to_string_pretty(&json!({
-                "current": current,
-                "branches": branches
-            }))
-            .unwrap_or_default(),
-            error: None,
-        })
+            let mut branches = Vec::new();
+            let mut current = String::new();
+
+            for line in output.lines() {
+                if let Some((name, head)) = line.split_once('|') {
+                    let is_current = head == "*";
+                    if is_current {
+                        current = name.to_string();
+                    }
+                    branches.push(json!({
+                        "name": name,
+                        "current": is_current
+                    }));
+                }
+            }
+
+            Ok(ToolResult {
+                success: true,
+                output: serde_json::to_string_pretty(&json!({
+                    "current": current,
+                    "branches": branches
+                }))
+                .unwrap_or_default(),
+                error: None,
+            })
+        }
     }
 
     fn truncate_commit_message(message: &str) -> String {
@@ -447,14 +484,27 @@ impl GitOperationsTool {
             anyhow::bail!("Branch name contains invalid characters");
         }
 
-        let output = self
-            .run_git_command(&["checkout", branch_name], working_dir)
-            .await;
+        let create = args
+            .get("create")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+
+        let output = if create {
+            self.run_git_command(&["checkout", "-b", branch_name], working_dir)
+                .await
+        } else {
+            self.run_git_command(&["checkout", branch_name], working_dir)
+                .await
+        };
 
         match output {
             Ok(_) => Ok(ToolResult {
                 success: true,
-                output: format!("Switched to branch: {branch_name}"),
+                output: if create {
+                    format!("Created and switched to branch: {branch_name}")
+                } else {
+                    format!("Switched to branch: {branch_name}")
+                },
                 error: None,
             }),
             Err(e) => Ok(ToolResult {
@@ -507,7 +557,16 @@ impl GitOperationsTool {
             }
         }
 
-        let mut git_args = vec!["push", remote];
+        let set_upstream = args
+            .get("set_upstream")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+
+        let mut git_args = vec!["push"];
+        if set_upstream {
+            git_args.push("-u");
+        }
+        git_args.push(remote);
         if let Some(b) = branch {
             git_args.push(b);
         }
@@ -673,32 +732,60 @@ impl GitOperationsTool {
             });
         }
 
-        // path must be a single directory name — no separators, no traversal
-        if path.is_empty()
-            || path.contains('/')
-            || path.contains('\\')
-            || path == ".."
-            || path == "."
-        {
+        if path.is_empty() {
             return Ok(ToolResult {
                 success: false,
                 output: String::new(),
-                error: Some(
-                    "'path' must be a single directory name with no path separators".into(),
-                ),
+                error: Some("'path' cannot be empty".into()),
             });
         }
 
+        // Build the target path and reject any traversal or absolute components.
         let target = self.workspace_dir.join(path);
-        if target
-            .components()
-            .any(|c| c == std::path::Component::ParentDir)
-        {
+        if target.components().any(|c| {
+            c == std::path::Component::ParentDir || c == std::path::Component::RootDir
+        }) {
             return Ok(ToolResult {
                 success: false,
                 output: String::new(),
                 error: Some("'path' resolves outside the workspace directory".into()),
             });
+        }
+
+        // Validate each segment: non-empty, not "." or ".."
+        for segment in std::path::Path::new(path).components() {
+            match segment {
+                std::path::Component::Normal(s) => {
+                    if s.is_empty() || s == "." || s == ".." {
+                        return Ok(ToolResult {
+                            success: false,
+                            output: String::new(),
+                            error: Some("'path' contains invalid segment".into()),
+                        });
+                    }
+                }
+                _ => {
+                    return Ok(ToolResult {
+                        success: false,
+                        output: String::new(),
+                        error: Some("'path' must be a relative path within the workspace".into()),
+                    });
+                }
+            }
+        }
+
+        // The parent directory must already exist (workspace or a subdirectory).
+        if let Some(parent) = target.parent() {
+            if !parent.exists() {
+                return Ok(ToolResult {
+                    success: false,
+                    output: String::new(),
+                    error: Some(format!(
+                        "Parent directory '{}' does not exist",
+                        parent.display()
+                    )),
+                });
+            }
         }
 
         if target.exists() {
@@ -761,7 +848,15 @@ impl Tool for GitOperationsTool {
                 },
                 "branch": {
                     "type": "string",
-                    "description": "Branch name"
+                    "description": "Branch name. For the 'branch' operation, providing this creates the branch. For 'checkout', use with 'create: true' to create and switch."
+                },
+                "create": {
+                    "type": "boolean",
+                    "description": "For 'checkout': create the branch if it does not exist (git checkout -b)"
+                },
+                "set_upstream": {
+                    "type": "boolean",
+                    "description": "For 'push': set upstream tracking reference (-u). Use when pushing a new local branch for the first time."
                 },
                 "remote": {
                     "type": "string",
@@ -790,7 +885,7 @@ impl Tool for GitOperationsTool {
                 },
                 "path": {
                     "type": "string",
-                    "description": "Must be a workspace subdirectory."
+                    "description": "Workspace-relative path to the repository. For non-clone operations, the directory must exist. For 'clone', may include subdirectories (e.g. 'workspace/my-repo'); the parent must already exist."
                 },
                 "url": {
                     "type": "string",
@@ -824,6 +919,26 @@ impl Tool for GitOperationsTool {
             });
         }
 
+        // Early dispatch for clone — resolve_working_dir would fail because the destination
+        // doesn't exist yet. git_clone() handles its own path validation.
+        if operation == "clone" {
+            if !self.security.can_act() {
+                return Ok(ToolResult {
+                    success: false,
+                    output: String::new(),
+                    error: Some("Write operation blocked: read-only mode".into()),
+                });
+            }
+            if !self.security.record_action() {
+                return Ok(ToolResult {
+                    success: false,
+                    output: String::new(),
+                    error: Some("Rate limit exceeded".into()),
+                });
+            }
+            return self.git_clone(args).await;
+        }
+
         let working_dir = match self.resolve_working_dir(path) {
             Ok(d) => d,
             Err(e) => {
@@ -845,27 +960,6 @@ impl Tool for GitOperationsTool {
                         .into(),
                 ),
             });
-        }
-
-        // Early dispatch for clone — it bypasses the .git check since destination doesn't exist yet
-        if operation == "clone" {
-            if self.requires_write_access(operation) {
-                if !self.security.can_act() {
-                    return Ok(ToolResult {
-                        success: false,
-                        output: String::new(),
-                        error: Some("Write operation blocked: read-only mode".into()),
-                    });
-                }
-            }
-            if !self.security.record_action() {
-                return Ok(ToolResult {
-                    success: false,
-                    output: String::new(),
-                    error: Some("Rate limit exceeded".into()),
-                });
-            }
-            return self.git_clone(args).await;
         }
 
         // Check if we're in a git repository
@@ -1049,9 +1143,11 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let tool = test_tool(tmp.path());
 
-        // Branch listing is read-only; it must not require write access
+        // "branch" is not in requires_write_access so listing is never blocked at the operation
+        // level. Branch creation guards itself internally.
         assert!(!tool.requires_write_access("branch"));
-        assert!(tool.is_read_only("branch"));
+        // "branch" is also not classified as purely read-only since it can create branches.
+        assert!(!tool.is_read_only("branch"));
     }
 
     #[test]
@@ -1062,7 +1158,8 @@ mod tests {
         assert!(tool.is_read_only("status"));
         assert!(tool.is_read_only("diff"));
         assert!(tool.is_read_only("log"));
-        assert!(tool.is_read_only("branch"));
+        // "branch" is conditional — not purely read-only (can create), not write-gated (can list)
+        assert!(!tool.is_read_only("branch"));
 
         assert!(!tool.is_read_only("commit"));
         assert!(!tool.is_read_only("add"));
