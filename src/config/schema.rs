@@ -317,6 +317,10 @@ pub struct Config {
     #[serde(default)]
     pub web_search: WebSearchConfig,
 
+    /// Interactive user prompting tool configuration (`[ask_user]`).
+    #[serde(default)]
+    pub ask_user: AskUserConfig,
+
     /// Local context tool configuration (`[local_context]`).
     #[serde(default)]
     pub local_context: LocalContextConfig,
@@ -2487,6 +2491,37 @@ impl Default for WebSearchConfig {
             searxng_instance_url: None,
             max_results: default_web_search_max_results(),
             timeout_secs: default_web_search_timeout_secs(),
+        }
+    }
+}
+
+// ── Ask User ──────────────────────────────────────────────────────────────────
+
+/// Interactive user prompting tool configuration (`[ask_user]` section).
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct AskUserConfig {
+    /// Enable the `ask_user` tool.
+    #[serde(default)]
+    pub enabled: bool,
+    /// Default timeout in seconds when waiting for a user response.
+    #[serde(default = "default_ask_user_timeout_secs")]
+    pub default_timeout_secs: u64,
+    /// Preferred channel when none is specified (e.g. "slack").
+    /// When empty, uses the first available channel.
+    #[serde(default)]
+    pub default_channel: Option<String>,
+}
+
+fn default_ask_user_timeout_secs() -> u64 {
+    300
+}
+
+impl Default for AskUserConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            default_timeout_secs: default_ask_user_timeout_secs(),
+            default_channel: None,
         }
     }
 }
@@ -6047,6 +6082,7 @@ impl Default for Config {
             elasticsearch: ElasticsearchConfig::default(),
             github: GitHubToolConfig::default(),
             servicenow: ServiceNowConfig::default(),
+            ask_user: AskUserConfig::default(),
             local_context: LocalContextConfig::default(),
         }
     }
@@ -9336,6 +9372,7 @@ default_temperature = 0.7
             elasticsearch: ElasticsearchConfig::default(),
             github: GitHubToolConfig::default(),
             servicenow: ServiceNowConfig::default(),
+            ask_user: AskUserConfig::default(),
             local_context: LocalContextConfig::default(),
         };
 
@@ -9635,6 +9672,7 @@ compact_context = true
             elasticsearch: ElasticsearchConfig::default(),
             github: GitHubToolConfig::default(),
             servicenow: ServiceNowConfig::default(),
+            ask_user: AskUserConfig::default(),
             local_context: LocalContextConfig::default(),
         };
 

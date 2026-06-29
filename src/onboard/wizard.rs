@@ -257,6 +257,7 @@ pub async fn run_wizard(force: bool) -> Result<Config> {
         elasticsearch: crate::config::schema::ElasticsearchConfig::default(),
         github: crate::config::schema::GitHubToolConfig::default(),
         servicenow: crate::config::schema::ServiceNowConfig::default(),
+        ask_user: crate::config::schema::AskUserConfig::default(),
         local_context: crate::config::schema::LocalContextConfig::default(),
     };
 
@@ -638,6 +639,7 @@ async fn run_quick_setup_with_home(
         elasticsearch: crate::config::schema::ElasticsearchConfig::default(),
         github: crate::config::schema::GitHubToolConfig::default(),
         servicenow: crate::config::schema::ServiceNowConfig::default(),
+        ask_user: crate::config::schema::AskUserConfig::default(),
         local_context: crate::config::schema::LocalContextConfig::default(),
     };
     if no_totp {

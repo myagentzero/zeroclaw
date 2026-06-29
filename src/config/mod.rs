@@ -5,7 +5,7 @@ pub mod traits;
 pub use schema::{
     AckReactionChannelsConfig, AckReactionChatType, AckReactionConfig, AckReactionRuleAction,
     AckReactionRuleConfig, AckReactionStrategy, AgentConfig, AgentLoadBalanceStrategy,
-    AgentSessionBackend, AgentSessionConfig, AgentSessionStrategy, AgentTeamsConfig,
+    AgentSessionBackend, AskUserConfig, AgentSessionConfig, AgentSessionStrategy, AgentTeamsConfig,
     AgentsIpcConfig, AuditConfig, AutonomyConfig, BrowserComputerUseConfig, BrowserConfig,
     BuiltinHooksConfig, ChannelsConfig, ClassificationRule, CommandContextRuleAction,
     CommandContextRuleConfig, ComposioConfig, Config, ConsolidationConfig,

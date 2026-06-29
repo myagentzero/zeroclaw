@@ -207,6 +207,26 @@ static DEFERRED_ACTION_WITHOUT_TOOL_CALL_REGEX: LazyLock<Regex> = LazyLock::new(
     .unwrap()
 });
 
+/// Phrases that establish a conditional-offer context immediately before "I'll/we'll".
+/// When one of these appears in the text just before the deferred-action trigger, the
+/// match is an offer of optional follow-up work ("say the word and I'll re-run"), not
+/// an unfinished pending action.
+static OFFER_CONTEXT_REGEX: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r"(?ix)
+        (
+            say\s+the\s+word                                   |
+            let\s+me\s+know                                    |
+            just\s+ask                                         |
+            tell\s+me\s+(?:if|and|what|which|whether)         |
+            if\s+you\s+(?:want|need|like|prefer|say\s+so)     |
+            want\s+(?:me|us)\s+to                              |
+            would\s+you\s+like
+        )",
+    )
+    .unwrap()
+});
+
 /// Scrub credentials from tool output to prevent accidental exfiltration.
 /// Replaces known credential patterns with a redacted placeholder while preserving
 /// a small prefix for context.
@@ -584,8 +604,32 @@ fn looks_like_deferred_action_without_tool_call(text: &str) -> bool {
     if trimmed.is_empty() {
         return false;
     }
-
-    DEFERRED_ACTION_WITHOUT_TOOL_CALL_REGEX.is_match(trimmed)
+    // Fast path: primary pattern not present at all.
+    if !DEFERRED_ACTION_WITHOUT_TOOL_CALL_REGEX.is_match(trimmed) {
+        return false;
+    }
+    // In a long response (>500 chars), if the deferred-action pattern only appears
+    // in the trailing 30% of the text, it is a trailing conditional offer
+    // ("say the word and I'll re-run"), not a pending deferral.
+    if trimmed.len() > 500 {
+        let early_end = trimmed.len() * 7 / 10;
+        if !DEFERRED_ACTION_WITHOUT_TOOL_CALL_REGEX.is_match(&trimmed[..early_end]) {
+            return false;
+        }
+    }
+    // For each match, check both the 60-char window before it and the match text
+    // itself for offer-context language. "let me know if you want me to check"
+    // contains the offer phrase within the match; "say the word and I'll re-run"
+    // has it in the window before. Return true only if at least one match has no
+    // offer context in either location.
+    DEFERRED_ACTION_WITHOUT_TOOL_CALL_REGEX
+        .find_iter(trimmed)
+        .any(|m| {
+            let window_start = m.start().saturating_sub(60);
+            let before = &trimmed[window_start..m.start()];
+            let matched = m.as_str();
+            !OFFER_CONTEXT_REGEX.is_match(before) && !OFFER_CONTEXT_REGEX.is_match(matched)
+        })
 }
 
 fn merge_continuation_text(existing: &str, next: &str) -> String {
@@ -1967,9 +2011,12 @@ pub async fn run_tool_call_loop(
                         "response_excerpt": truncate_with_ellipsis(&redact_trace_text(&display_text), 600),
                     }),
                 );
-                anyhow::bail!(
-                    "Model deferred action without emitting a tool call after retry; refusing to return unverified completion."
+                tracing::warn!(
+                    iteration = iteration + 1,
+                    response_excerpt = %truncate_with_ellipsis(&redact_trace_text(&display_text), 200),
+                    "LLM response still implied follow-up action after retry but emitted no tool call; returning as final answer"
                 );
+                // Fall through to return the response to the user rather than erroring.
             }
 
             runtime_trace::record_event(
@@ -5144,7 +5191,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn run_tool_call_loop_errors_when_deferred_action_repeats_without_tool_call() {
+    async fn run_tool_call_loop_returns_response_when_deferred_action_repeats_without_tool_call() {
+        // When the LLM defers on both the initial turn and the retry, the loop should
+        // return the response as the final answer rather than erroring — the message
+        // must reach the user.
         let provider = ScriptedProvider::from_text_responses(vec![
             "I'll check that right away.",
             "Let me inspect that in detail now.",
@@ -5162,7 +5212,7 @@ mod tests {
         ];
         let observer = NoopObserver;
 
-        let err = run_tool_call_loop(
+        let result = run_tool_call_loop(
             &provider,
             &mut history,
             &tools_registry,
@@ -5181,12 +5231,11 @@ mod tests {
             &[],
         )
         .await
-        .expect_err("second deferred response without tool call should hard-fail");
+        .expect("loop should return the response rather than error after repeated deferral");
 
-        let err_text = err.to_string();
-        assert!(
-            err_text.contains("deferred action without emitting a tool call"),
-            "unexpected error text: {err_text}"
+        assert_eq!(
+            result, "Let me inspect that in detail now.",
+            "the retry response should be returned as the final answer"
         );
         assert_eq!(
             invocations.load(Ordering::SeqCst),
@@ -6584,6 +6633,41 @@ Done."#;
     fn looks_like_deferred_action_without_tool_call_ignores_final_answers() {
         assert!(!looks_like_deferred_action_without_tool_call(
             "The latest update is already shown above."
+        ));
+    }
+
+    #[test]
+    fn looks_like_deferred_action_without_tool_call_ignores_say_the_word_offer() {
+        // Conditional offer: model has finished but invites follow-up
+        assert!(!looks_like_deferred_action_without_tool_call(
+            "say the word and I'll re-run it"
+        ));
+        assert!(!looks_like_deferred_action_without_tool_call(
+            "let me know if you want me to check anything else"
+        ));
+        assert!(!looks_like_deferred_action_without_tool_call(
+            "if you want, I'll run the analysis again"
+        ));
+    }
+
+    #[test]
+    fn looks_like_deferred_action_without_tool_call_ignores_trailing_offer_in_long_response() {
+        // In a long completed response, "I'll re-run" only in the trailing 30% is an offer.
+        let early = "Here are the full results.\n\n".repeat(20); // >500 chars, no trigger
+        let trailing = " say the word and I'll re-run with different parameters.";
+        let full = format!("{early}{trailing}");
+        assert!(full.len() > 500);
+        assert!(!looks_like_deferred_action_without_tool_call(&full));
+    }
+
+    #[test]
+    fn looks_like_deferred_action_without_tool_call_still_detects_early_deferral() {
+        // Short response with deferral at the start — should still be flagged.
+        assert!(looks_like_deferred_action_without_tool_call(
+            "Let me check the workspace for the file."
+        ));
+        assert!(looks_like_deferred_action_without_tool_call(
+            "I'll search for the CSV now."
         ));
     }
 
