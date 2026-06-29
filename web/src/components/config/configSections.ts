@@ -677,13 +677,6 @@ export const CONFIG_SECTIONS: SectionDef[] = [
         ]
       },
       { key: 'auto_save', label: 'Auto Save', type: 'toggle', defaultValue: true },
-      { key: 'hygiene_enabled', label: 'Hygiene Enabled', type: 'toggle', defaultValue: true },
-      { key: 'archive_after_days', label: 'Archive After (days)', type: 'number', min: 1, defaultValue: 7, description: 'Default: 7' },
-      { key: 'purge_after_days', label: 'Purge After (days)', type: 'number', min: 1, defaultValue: 30, description: 'Default: 30' },
-      { key: 'conversation_retention_days', label: 'Conversation Retention (days)', type: 'number', min: 1, defaultValue: 30, description: 'Default: 30' },
-      { key: 'daily_retention_days', label: 'Daily Retention (days)', type: 'number', min: 1, defaultValue: 30, description: 'Default: 30' },
-      { key: 'system_retention_days', label: 'System Retention (days)', type: 'number', min: 1, defaultValue: 7, description: 'Default: 7' },
-      { key: 'cost_retention_days', label: 'Cost Retention (days)', type: 'number', min: 1, defaultValue: 60, description: 'Default: 60 — prune cost records older than this many days' },
       { key: 'embedding_provider', label: 'Embedding Provider', type: 'text', defaultValue: 'none', description: 'e.g. none, openai, local' },
       { key: 'embedding_model', label: 'Embedding Model', type: 'text', defaultValue: 'text-embedding-3-small', description: 'e.g. text-embedding-3-small' },
       { key: 'embedding_dimensions', label: 'Embedding Dimensions', type: 'number', min: 1, defaultValue: 1536, description: 'Default: 1536' },
@@ -694,6 +687,38 @@ export const CONFIG_SECTIONS: SectionDef[] = [
       { key: 'response_cache_ttl_minutes', label: 'Cache TTL (min)', type: 'number', min: 1, defaultValue: 60, description: 'Default: 60' },
       { key: 'snapshot_enabled', label: 'Snapshots', type: 'toggle', defaultValue: false },
       { key: 'auto_hydrate', label: 'Auto Hydrate', type: 'toggle', defaultValue: true },
+    ],
+  },
+
+  // ── Memory: Hygiene ───────────────────────────────────────────────
+  {
+    path: 'memory',
+    category: 'memory',
+    title: 'Memory: Hygiene',
+    description: 'File archival and database cleanup schedule',
+    icon: Database,
+    defaultCollapsed: true,
+    fields: [
+      { key: 'hygiene_enabled', label: 'Hygiene Enabled', type: 'toggle', defaultValue: true, description: 'Run archival and retention cleanup on a 12-hour cadence' },
+      { key: 'archive_after_days', label: 'Archive After (days)', type: 'number', min: 1, defaultValue: 7, description: 'Move daily/session files to archive/ after this many days. Default: 7' },
+      { key: 'purge_after_days', label: 'Purge After (days)', type: 'number', min: 1, defaultValue: 30, description: 'Delete archived files after this many days. Default: 30' },
+    ],
+  },
+
+  // ── Memory: Retention ─────────────────────────────────────────────
+  {
+    path: 'memory',
+    category: 'memory',
+    title: 'Memory: Retention',
+    description: 'How long each memory category is kept in the database (0 = never prune)',
+    icon: Database,
+    defaultCollapsed: true,
+    fields: [
+      { key: 'conversation_retention_days', label: 'Conversation (days)', type: 'number', min: 0, defaultValue: 30, description: 'Prune conversation-category rows older than this. Default: 30' },
+      { key: 'daily_retention_days', label: 'Daily (days)', type: 'number', min: 0, defaultValue: 30, description: 'Prune daily-category rows older than this. Default: 30' },
+      { key: 'system_retention_days', label: 'System (days)', type: 'number', min: 0, defaultValue: 7, description: 'Prune system-category rows older than this. Default: 7' },
+      { key: 'cost_retention_days', label: 'Cost Records (days)', type: 'number', min: 0, defaultValue: 60, description: 'Prune cost records older than this. Default: 60' },
+      { key: 'core_auto_retention_days', label: 'Auto-Extracted Core (days)', type: 'number', min: 0, defaultValue: 90, description: 'Prune auto_-prefixed Core memories (LLM-extracted facts) older than this. 0 = never. Default: 90' },
     ],
   },
 

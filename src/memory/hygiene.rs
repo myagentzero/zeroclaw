@@ -20,6 +20,7 @@ struct HygieneReport {
     pruned_conversation_rows: u64,
     pruned_daily_rows: u64,
     pruned_system_rows: u64,
+    pruned_auto_core_rows: u64,
 }
 
 impl HygieneReport {
@@ -31,6 +32,7 @@ impl HygieneReport {
             + self.pruned_conversation_rows
             + self.pruned_daily_rows
             + self.pruned_system_rows
+            + self.pruned_auto_core_rows
     }
 }
 
@@ -66,6 +68,7 @@ pub fn run_if_due(config: &MemoryConfig, workspace_dir: &Path) -> Result<()> {
         )?,
         pruned_daily_rows: prune_daily_rows(workspace_dir, config.daily_retention_days)?,
         pruned_system_rows: prune_system_rows(workspace_dir, config.system_retention_days)?,
+        pruned_auto_core_rows: prune_auto_core_rows(workspace_dir, config.core_auto_retention_days)?,
     };
 
     prune_cost_records(workspace_dir, config.cost_retention_days)?;
@@ -74,7 +77,7 @@ pub fn run_if_due(config: &MemoryConfig, workspace_dir: &Path) -> Result<()> {
 
     if report.total_actions() > 0 {
         tracing::info!(
-            "memory hygiene complete: archived_memory={} archived_sessions={} purged_memory={} purged_sessions={} pruned_conversation_rows={} pruned_daily_rows={} pruned_system_rows={}",
+            "memory hygiene complete: archived_memory={} archived_sessions={} purged_memory={} purged_sessions={} pruned_conversation_rows={} pruned_daily_rows={} pruned_system_rows={} pruned_auto_core_rows={}",
             report.archived_memory_files,
             report.archived_session_files,
             report.purged_memory_archives,
@@ -82,6 +85,7 @@ pub fn run_if_due(config: &MemoryConfig, workspace_dir: &Path) -> Result<()> {
             report.pruned_conversation_rows,
             report.pruned_daily_rows,
             report.pruned_system_rows,
+            report.pruned_auto_core_rows,
         );
     }
 
@@ -367,6 +371,28 @@ fn prune_system_rows(workspace_dir: &Path, retention_days: u32) -> Result<u64> {
 
     let affected = conn.execute(
         "DELETE FROM memories WHERE category = 'system' AND updated_at < ?1",
+        params![cutoff],
+    )?;
+
+    Ok(u64::try_from(affected).unwrap_or(0))
+}
+
+fn prune_auto_core_rows(workspace_dir: &Path, retention_days: u32) -> Result<u64> {
+    if retention_days == 0 {
+        return Ok(0);
+    }
+
+    let db_path = workspace_dir.join("memory").join("brain.db");
+    if !db_path.exists() {
+        return Ok(0);
+    }
+
+    let conn = Connection::open(db_path)?;
+    conn.execute_batch("PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL;")?;
+    let cutoff = (Local::now() - Duration::days(i64::from(retention_days))).to_rfc3339();
+
+    let affected = conn.execute(
+        "DELETE FROM memories WHERE category = 'core' AND key LIKE 'auto_%' AND updated_at < ?1",
         params![cutoff],
     )?;
 
@@ -823,5 +849,69 @@ mod tests {
             !result.contains("old-record"),
             "old record should be pruned"
         );
+    }
+
+    #[tokio::test]
+    async fn prunes_old_auto_core_rows_in_sqlite_backend() {
+        let tmp = TempDir::new().unwrap();
+        let workspace = tmp.path();
+
+        let mem = SqliteMemory::new(workspace).unwrap();
+        // Old auto_ Core row — should be pruned
+        mem.store("auto_old_fact", "stale extracted fact", MemoryCategory::Core, None)
+            .await
+            .unwrap();
+        // Recent auto_ Core row — should survive
+        mem.store("auto_recent_fact", "fresh extracted fact", MemoryCategory::Core, None)
+            .await
+            .unwrap();
+        // Old non-auto_ Core row (user-created) — should survive regardless of age
+        mem.store("user_preference", "user prefers Rust", MemoryCategory::Core, None)
+            .await
+            .unwrap();
+        drop(mem);
+
+        let db_path = workspace.join("memory").join("brain.db");
+        let conn = Connection::open(&db_path).unwrap();
+        let old_cutoff = (Local::now() - Duration::days(100)).to_rfc3339();
+        conn.execute(
+            "UPDATE memories SET created_at = ?1, updated_at = ?1 WHERE key IN ('auto_old_fact', 'user_preference')",
+            params![old_cutoff],
+        )
+        .unwrap();
+        drop(conn);
+
+        let mut cfg = default_cfg();
+        cfg.archive_after_days = 0;
+        cfg.purge_after_days = 0;
+        cfg.conversation_retention_days = 0;
+        cfg.daily_retention_days = 0;
+        cfg.system_retention_days = 0;
+        cfg.core_auto_retention_days = 90;
+
+        run_if_due(&cfg, workspace).unwrap();
+
+        let mem2 = SqliteMemory::new(workspace).unwrap();
+        assert!(
+            mem2.get("auto_old_fact").await.unwrap().is_none(),
+            "old auto_ Core row should be pruned"
+        );
+        assert!(
+            mem2.get("auto_recent_fact").await.unwrap().is_some(),
+            "recent auto_ Core row should remain"
+        );
+        assert!(
+            mem2.get("user_preference").await.unwrap().is_some(),
+            "user-created Core row should never be pruned by auto_ hygiene"
+        );
+    }
+
+    #[test]
+    fn auto_core_pruning_disabled_when_retention_days_is_zero() {
+        let tmp = TempDir::new().unwrap();
+        let workspace = tmp.path();
+        // No DB exists — prune_auto_core_rows must return 0 cleanly
+        let result = prune_auto_core_rows(workspace, 0).unwrap();
+        assert_eq!(result, 0, "retention_days=0 should skip pruning and return 0");
     }
 }
