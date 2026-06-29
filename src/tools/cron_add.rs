@@ -87,7 +87,7 @@ impl Tool for CronAddTool {
                         "at": {
                             "type": "string",
                             "format": "date-time",
-                            "description": "RFC3339 timestamp for kind='at' (e.g. 2026-06-29T09:00:00Z). YYYY-MM-DD HH:MM:SS is accepted as UTC."
+                            "description": "RFC3339 timestamp for kind='at' (e.g. 2026-06-29T09:00:00Z). YYYY-MM-DD HH:MM:SS is accepted as local time."
                         },
                         "every_ms": {
                             "type": "integer",

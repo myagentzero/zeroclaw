@@ -1,6 +1,6 @@
 use crate::cron::Schedule;
 use anyhow::{Context, Result, anyhow};
-use chrono::{DateTime, Duration as ChronoDuration, NaiveDateTime, Utc};
+use chrono::{DateTime, Duration as ChronoDuration, Local, NaiveDateTime, TimeZone, Utc};
 use cron::Schedule as CronExprSchedule;
 use serde_json::Value;
 use std::str::FromStr;
@@ -25,7 +25,9 @@ pub fn parse_at_timestamp_lenient(raw: &str) -> Result<DateTime<Utc>> {
 
     for fmt in NAIVE_AT_FORMATS {
         if let Ok(naive) = NaiveDateTime::parse_from_str(trimmed, fmt) {
-            return Ok(naive.and_utc());
+            // When no timezone is specified, interpret as local time and convert to UTC
+            return Ok(Local.from_local_datetime(&naive).single()
+                .context("Local time is ambiguous or invalid")?.with_timezone(&Utc));
         }
     }
 
@@ -38,7 +40,7 @@ pub fn schedule_at_parse_hint(raw_at: &str) -> String {
     if looks_like_space_separated {
         format!(
             "schedule.at must be RFC3339 (e.g. \"2026-06-29T09:00:00Z\"). \
-Got \"{raw_at}\" — use ISO-8601 with 'T' and a timezone, or \"YYYY-MM-DD HH:MM:SS\" (interpreted as UTC)"
+Got \"{raw_at}\" — use ISO-8601 with 'T' and a timezone, or \"YYYY-MM-DD HH:MM:SS\" (interpreted as local time)"
         )
     } else {
         format!(
@@ -206,12 +208,15 @@ mod tests {
     }
 
     #[test]
-    fn parse_at_timestamp_lenient_accepts_rfc3339_and_space_separated_utc() {
+    fn parse_at_timestamp_lenient_accepts_rfc3339_and_space_separated_local() {
         let rfc = parse_at_timestamp_lenient("2026-06-29T09:00:00Z").unwrap();
         assert_eq!(rfc, Utc.with_ymd_and_hms(2026, 6, 29, 9, 0, 0).unwrap());
 
+        // Space-separated timestamps are interpreted as local time
         let spaced = parse_at_timestamp_lenient("2026-06-29 09:00:00").unwrap();
-        assert_eq!(spaced, Utc.with_ymd_and_hms(2026, 6, 29, 9, 0, 0).unwrap());
+        let expected_local = Local.with_ymd_and_hms(2026, 6, 29, 9, 0, 0).unwrap();
+        let expected_utc = expected_local.with_timezone(&Utc);
+        assert_eq!(spaced, expected_utc);
     }
 
     #[test]
@@ -221,10 +226,12 @@ mod tests {
             "at": "2026-06-29 09:00:00"
         }))
         .unwrap();
+        let expected_local = Local.with_ymd_and_hms(2026, 6, 29, 9, 0, 0).unwrap();
+        let expected_utc = expected_local.with_timezone(&Utc);
         assert_eq!(
             schedule,
             Schedule::At {
-                at: Utc.with_ymd_and_hms(2026, 6, 29, 9, 0, 0).unwrap()
+                at: expected_utc
             }
         );
     }
