@@ -398,7 +398,19 @@ impl Tool for FileEditTool {
         new_content.push_str(new_string);
         new_content.push_str(&content[match_outcome.end..]);
 
-        match tokio::fs::write(&resolved_target, &new_content).await {
+        // Write to a sibling temp file then atomically rename into place.
+        // This prevents partial-write corruption when concurrent edits race on
+        // the same target: readers always see a complete file, never a truncated
+        // or interleaved one.
+        let tmp_path = resolved_target.with_extension("tmp");
+        if let Err(e) = tokio::fs::write(&tmp_path, &new_content).await {
+            return Ok(ToolResult {
+                success: false,
+                output: String::new(),
+                error: Some(format!("Failed to write temp file: {e}")),
+            });
+        }
+        match tokio::fs::rename(&tmp_path, &resolved_target).await {
             Ok(()) => Ok(ToolResult {
                 success: true,
                 output: format!(
@@ -412,11 +424,14 @@ impl Tool for FileEditTool {
                 ),
                 error: None,
             }),
-            Err(e) => Ok(ToolResult {
-                success: false,
-                output: String::new(),
-                error: Some(format!("Failed to write file: {e}")),
-            }),
+            Err(e) => {
+                let _ = tokio::fs::remove_file(&tmp_path).await;
+                Ok(ToolResult {
+                    success: false,
+                    output: String::new(),
+                    error: Some(format!("Failed to rename temp file: {e}")),
+                })
+            }
         }
     }
 }

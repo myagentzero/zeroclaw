@@ -114,6 +114,22 @@ pub(super) struct ToolExecutionOutcome {
     pub(super) duration: Duration,
 }
 
+const FILE_WRITE_TOOLS: &[&str] = &["file_edit", "file_write", "file_append"];
+
+fn extract_write_path<'a>(call: &'a ParsedToolCall) -> Option<&'a str> {
+    if FILE_WRITE_TOOLS.contains(&call.name.as_str()) {
+        call.arguments.get("path").and_then(|v| v.as_str())
+    } else {
+        None
+    }
+}
+
+fn has_conflicting_file_writes(tool_calls: &[ParsedToolCall]) -> bool {
+    let paths: Vec<&str> = tool_calls.iter().filter_map(extract_write_path).collect();
+    let unique_count = paths.iter().collect::<std::collections::HashSet<_>>().len();
+    unique_count < paths.len()
+}
+
 pub(super) fn should_execute_tools_in_parallel(
     tool_calls: &[ParsedToolCall],
     approval: Option<&ApprovalManager>,
@@ -131,6 +147,13 @@ pub(super) fn should_execute_tools_in_parallel(
             // enforce CLI prompt/deny policy consistently.
             return false;
         }
+    }
+
+    // Concurrent writes to the same file cause a read-modify-write race that
+    // corrupts the file. Force sequential execution when any two write-tool
+    // calls target the same path.
+    if has_conflicting_file_writes(tool_calls) {
+        return false;
     }
 
     true

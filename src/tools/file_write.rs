@@ -219,17 +219,28 @@ impl Tool for FileWriteTool {
             });
         }
 
-        match tokio::fs::write(&resolved_target, &content).await {
+        let tmp_path = resolved_target.with_extension("tmp");
+        if let Err(e) = tokio::fs::write(&tmp_path, &content).await {
+            return Ok(ToolResult {
+                success: false,
+                output: String::new(),
+                error: Some(format!("Failed to write temp file: {e}")),
+            });
+        }
+        match tokio::fs::rename(&tmp_path, &resolved_target).await {
             Ok(()) => Ok(ToolResult {
                 success: true,
                 output: format!("Written {} bytes to {path}", content.len()),
                 error: None,
             }),
-            Err(e) => Ok(ToolResult {
-                success: false,
-                output: String::new(),
-                error: Some(format!("Failed to write file: {e}")),
-            }),
+            Err(e) => {
+                let _ = tokio::fs::remove_file(&tmp_path).await;
+                Ok(ToolResult {
+                    success: false,
+                    output: String::new(),
+                    error: Some(format!("Failed to rename temp file: {e}")),
+                })
+            }
         }
     }
 }
