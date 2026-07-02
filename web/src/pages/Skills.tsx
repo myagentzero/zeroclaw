@@ -4,8 +4,6 @@ import {
   ChevronDown,
   ChevronRight,
   Wrench,
-  Tag,
-  User,
   FolderOpen,
   BookOpen,
   Activity,
@@ -44,8 +42,7 @@ export default function Skills() {
   const filtered = skills.filter(
     (s) =>
       s.name.toLowerCase().includes(search.toLowerCase()) ||
-      s.description.toLowerCase().includes(search.toLowerCase()) ||
-      s.tags.some((tag) => tag.toLowerCase().includes(search.toLowerCase())),
+      s.description.toLowerCase().includes(search.toLowerCase()),
   );
 
   if (error) {
@@ -149,30 +146,10 @@ export default function Skills() {
                         <span className="text-xs text-gray-600">never used</span>
                       </div>
                     )}
-                    {skill.tags.length > 0 && (
-                      <div className="flex flex-wrap gap-1.5 mt-2">
-                        {skill.tags.map((tag) => (
-                          <span
-                            key={tag}
-                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-purple-900/30 text-purple-300 border border-purple-800/50"
-                          >
-                            <Tag className="h-3 w-3" />
-                            {tag}
-                          </span>
-                        ))}
-                      </div>
-                    )}
                   </button>
 
                   {isExpanded && (
                     <div className="border-t border-gray-800 p-4 space-y-3">
-                      {skill.author && (
-                        <div className="flex items-center gap-2 text-xs text-gray-400">
-                          <User className="h-3.5 w-3.5" />
-                          <span>{skill.author}</span>
-                        </div>
-                      )}
-
                       {skill.location && (
                         <div className="flex items-center gap-2 text-xs text-gray-400">
                           <FolderOpen className="h-3.5 w-3.5" />

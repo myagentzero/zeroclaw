@@ -42,7 +42,7 @@ const translations: Record<Locale, Record<string, string>> = {
     'dashboard.model': 'Model',
     'dashboard.uptime': 'Uptime',
     'dashboard.temperature': 'Temperature',
-    'dashboard.gateway_port': 'Gateway Port',
+    'dashboard.scheduled_jobs': 'Scheduled Jobs',
     'dashboard.locale': 'Locale',
     'dashboard.memory_backend': 'Memory Backend',
     'dashboard.paired': 'Paired',
@@ -79,8 +79,6 @@ const translations: Record<Locale, Record<string, string>> = {
     'skills.search': 'Search skills...',
     'skills.empty': 'No skills installed.',
     'skills.version': 'Version',
-    'skills.author': 'Author',
-    'skills.tags': 'Tags',
     'skills.tools': 'Tools',
     'skills.location': 'Location',
 

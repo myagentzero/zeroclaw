@@ -22,28 +22,13 @@ For first-time installation, start from [one-click-bootstrap.md](../setup-guides
 | Foreground runtime | `agentzero daemon` | local debugging, short-lived sessions |
 | Foreground gateway only | `agentzero gateway` | webhook endpoint testing |
 | User service | `agentzero service install && agentzero service start` | persistent operator-managed runtime |
-| Docker / Podman | `docker compose up -d` | containerized deployment |
+| Docker / Podman | `docker run -d ...` | containerized deployment |
 
 ## Docker / Podman Runtime
 
 If you installed via `./install.sh --docker`, the container exits after onboarding. To run
-AgentZero as a long-lived container, use the repository `docker-compose.yml` or start a
-container manually against the persisted data directory.
-
-### Recommended: docker-compose
-
-```bash
-# Start (detached, auto-restarts on reboot)
-docker compose up -d
-
-# Stop
-docker compose down
-
-# Restart
-docker compose up -d
-```
-
-Replace `docker` with `podman` if using Podman.
+AgentZero as a long-lived container, start a container manually against the persisted data
+directory.
 
 ### Manual container lifecycle
 
@@ -77,7 +62,7 @@ For Podman, add `--userns keep-id --user "$(id -u):$(id -g)"` and append `:Z` to
 ### Key detail: do not re-run install.sh to restart
 
 Re-running `install.sh --docker` rebuilds the image and re-runs onboarding. To simply
-restart, use `docker start`, `docker compose up -d`, or `podman start`.
+restart, use `docker start` or `podman start`.
 
 For full setup instructions, see [one-click-bootstrap.md](../setup-guides/one-click-bootstrap.md#stopping-and-restarting-a-dockerpodman-container).
 

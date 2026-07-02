@@ -13,7 +13,7 @@
   <a href="https://www.rust-lang.org"><img src="https://img.shields.io/badge/rust-edition%202024-orange?logo=rust" alt="Rust Edition 2024" /></a>
 </p>
 
-AgentZero is an agent runtime — a single Rust binary you configure and run. It talks to LLM providers (Anthropic, OpenAI, Ollama, and ~20 others). It answers you on the channels you already use (Slack, Discord, IRC, Email, Webhooks, and more). It has a web dashboard for real-time control and can connect to hardware peripherals (ESP32, STM32, Arduino, Raspberry Pi). The Gateway is the control plane — the product is the assistant.
+AgentZero is an agent runtime — a single Rust binary you configure and run. It talks to LLM providers (Anthropic, OpenAI, Ollama, and ~20 others). It answers you on the channels you already use (Slack, Discord, IRC, Email, Webhooks, and more). It has a web dashboard and a native [Android app](android/README.md) for real-time control, and can connect to hardware peripherals (ESP32, STM32, Arduino, Raspberry Pi). The Gateway is the control plane — the product is the assistant.
 
 If you want a personal, single-user assistant that feels local, fast, and always-on, this is it.
 
@@ -22,6 +22,7 @@ If you want a personal, single-user assistant that feels local, fast, and always
   <a href="docs/architecture/README.md">Architecture</a> ·
   <a href="#quick-start">Getting Started</a> ·
   <a href="docs/ops/troubleshooting.md">Troubleshoot</a> ·
+  <a href="android/README.md">Android App</a>
 </p>
 
 The installer asks whether you want a prebuilt binary (fast, ~seconds) or a source build (slower, customisable). Both end the same way — `agentzero onboard` kicks off automatically.
@@ -54,7 +55,7 @@ agentzero service start            # run it always-on in the background
 - **Provider-agnostic** — [model providers](docs/reference/api/providers-reference.md) are pluggable. Configure Anthropic, OpenAI, local Ollama, or any OpenAI-compatible endpoint. Fallback chains and routing keep the agent running when a provider flakes.
 - **Security-first, with escape hatches** — default autonomy is `supervised`: medium-risk ops require approval, high-risk blocked. Workspace boundaries, command policy, OS-level sandboxes (Landlock / Bubblewrap / Seatbelt / Docker), and cryptographic [tool receipts](docs/security/README.md) on every action. YOLO mode exists for trusted dev environments.
 - **Hardware-capable** — GPIO / I2C / SPI / USB on Raspberry Pi, STM32, Arduino, and ESP32 via the `Peripheral` trait. See [Hardware](docs/hardware/README.md).
-- **Gateway + dashboard** — HTTP / WebSocket gateway for clients, with a web dashboard for chat, memory browsing, config editing, cron management, and tool inspection.
+- **Gateway + dashboard** — HTTP / WebSocket gateway for clients, with a web dashboard for chat, memory browsing, config editing, cron management, and tool inspection. A native [Android app](android/README.md) covers the same ground on mobile, pairing over Tailscale.
 - **SOP engine** — event-triggered [Standard Operating Procedures](docs/reference/sop/README.md) (MQTT / webhook / cron / peripheral) with approval gates and resumable runs.
 - **ACP** — IDE / editor integration via Agent Client Protocol (JSON-RPC 2.0 over stdio).
 

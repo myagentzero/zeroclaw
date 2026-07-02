@@ -1,14 +1,21 @@
 package com.agentzero.client.ui
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.automirrored.filled.Logout
+import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.Dashboard
 import androidx.compose.material.icons.filled.Devices
+import androidx.compose.material.icons.filled.Dns
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Memory
 import androidx.compose.material.icons.filled.MonitorHeart
@@ -19,15 +26,19 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.NavigationDrawerItem
+import androidx.compose.material3.NavigationDrawerItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -48,6 +59,7 @@ import com.agentzero.client.ui.screens.MemoryScreen
 import com.agentzero.client.ui.screens.MissionControlScreen
 import com.agentzero.client.ui.screens.ScheduledJobsScreen
 import com.agentzero.client.ui.screens.WorkspaceScreen
+import com.agentzero.client.ui.theme.Spacing
 import kotlinx.coroutines.launch
 
 enum class MainDestination(
@@ -80,15 +92,18 @@ fun MainShell(
         drawerState = drawerState,
         drawerContent = {
             ModalDrawerSheet {
-                Text(
-                    "AgentZero",
-                    modifier = Modifier.padding(horizontal = 28.dp, vertical = 24.dp),
-                )
+                DrawerHeader(config)
+                HorizontalDivider(Modifier.padding(vertical = Spacing.sm))
                 MainDestination.entries.forEach { item ->
                     NavigationDrawerItem(
                         label = { Text(item.title) },
                         selected = destination == item,
                         icon = { Icon(item.icon, contentDescription = item.title) },
+                        shape = MaterialTheme.shapes.large,
+                        colors = NavigationDrawerItemDefaults.colors(
+                            selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
+                        ),
+                        modifier = Modifier.padding(horizontal = Spacing.sm, vertical = 2.dp),
                         onClick = {
                             destination = item
                             scope.launch { drawerState.close() }
@@ -112,6 +127,9 @@ fun MainShell(
                             Icon(Icons.Default.Settings, contentDescription = "Settings")
                         }
                     },
+                    colors = TopAppBarDefaults.topAppBarColors(
+                        containerColor = MaterialTheme.colorScheme.surface,
+                    ),
                 )
             },
         ) { padding ->
@@ -132,17 +150,33 @@ fun MainShell(
     if (showSettings) {
         AlertDialog(
             onDismissRequest = { showSettings = false },
+            icon = { Icon(Icons.Default.Dns, contentDescription = null) },
             title = { Text("Settings") },
             text = {
-                Text("Server: ${config.baseUrl}")
+                Column {
+                    Text("Server", style = MaterialTheme.typography.labelMedium)
+                    Text(
+                        config.baseUrl,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             },
             confirmButton = {
                 TextButton(onClick = {
                     showSettings = false
                     onLogout()
                 }) {
-                    Icon(Icons.AutoMirrored.Filled.Logout, contentDescription = null)
-                    Text("Sign out")
+                    Icon(
+                        Icons.AutoMirrored.Filled.Logout,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp),
+                        tint = MaterialTheme.colorScheme.error,
+                    )
+                    Text(
+                        " Sign out",
+                        color = MaterialTheme.colorScheme.error,
+                    )
                 }
             },
             dismissButton = {
@@ -152,6 +186,37 @@ fun MainShell(
                 }) { Text("Change server") }
             },
         )
+    }
+}
+
+@Composable
+private fun DrawerHeader(config: ServerConfig) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = Spacing.lg, vertical = Spacing.xl),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            modifier = Modifier
+                .size(44.dp)
+                .background(MaterialTheme.colorScheme.primaryContainer, CircleShape),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                Icons.Default.Bolt,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onPrimaryContainer,
+            )
+        }
+        Column(Modifier.padding(start = Spacing.md)) {
+            Text("AgentZero", style = MaterialTheme.typography.titleMedium)
+            Text(
+                config.baseUrl,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
     }
 }
 

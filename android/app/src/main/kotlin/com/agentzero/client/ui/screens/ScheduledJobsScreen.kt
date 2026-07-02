@@ -13,19 +13,18 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.EventNote
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -43,6 +42,11 @@ import androidx.compose.ui.unit.dp
 import com.agentzero.client.AppContainer
 import com.agentzero.client.data.model.CronJob
 import com.agentzero.client.data.model.ServerConfig
+import com.agentzero.client.ui.components.EmptyState
+import com.agentzero.client.ui.components.ErrorBanner
+import com.agentzero.client.ui.components.LoadingState
+import com.agentzero.client.ui.components.StatusChip
+import com.agentzero.client.ui.theme.Spacing
 import com.agentzero.client.ui.util.formatIsoDateTime
 import kotlinx.coroutines.launch
 
@@ -81,7 +85,8 @@ fun ScheduledJobsScreen(config: ServerConfig, container: AppContainer) {
             Modifier
                 .fillMaxSize()
                 .padding(padding)
-                .padding(12.dp),
+                .padding(Spacing.md),
+            verticalArrangement = Arrangement.spacedBy(Spacing.sm),
         ) {
             Row(
                 Modifier.fillMaxWidth(),
@@ -97,23 +102,17 @@ fun ScheduledJobsScreen(config: ServerConfig, container: AppContainer) {
                 }
             }
 
-            error?.let {
-                Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(top = 8.dp))
-            }
+            error?.let { ErrorBanner(it, onRetry = { reload() }) }
 
             when {
-                loading -> Column(
-                    Modifier.fillMaxSize(),
-                    verticalArrangement = Arrangement.Center,
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                ) { CircularProgressIndicator() }
+                loading -> LoadingState()
 
-                jobs.isEmpty() -> Text(
-                    "No scheduled jobs configured.",
-                    modifier = Modifier.padding(top = 24.dp),
+                jobs.isEmpty() -> EmptyState(
+                    icon = Icons.AutoMirrored.Filled.EventNote,
+                    title = "No scheduled jobs configured.",
                 )
 
-                else -> LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                else -> LazyColumn(verticalArrangement = Arrangement.spacedBy(Spacing.sm)) {
                     items(jobs, key = { it.id }) { job ->
                         Card(
                             modifier = Modifier
@@ -123,11 +122,11 @@ fun ScheduledJobsScreen(config: ServerConfig, container: AppContainer) {
                             Row(
                                 Modifier
                                     .fillMaxWidth()
-                                    .padding(12.dp),
+                                    .padding(Spacing.md),
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.Top,
                             ) {
-                                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
                                     Text(
                                         job.name?.takeIf { it.isNotBlank() } ?: "Untitled job",
                                         style = MaterialTheme.typography.titleSmall,
@@ -136,26 +135,33 @@ fun ScheduledJobsScreen(config: ServerConfig, container: AppContainer) {
                                         job.expression,
                                         fontFamily = FontFamily.Monospace,
                                         style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
                                     Text(
                                         "Next: ${formatIsoDateTime(job.nextRun)}",
                                         style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
-                                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Row(horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
                                         StatusChip(
                                             label = if (job.enabled) "Enabled" else "Disabled",
-                                            enabled = job.enabled,
+                                            active = job.enabled,
                                         )
                                         job.lastStatus?.takeIf { it.isNotBlank() }?.let { status ->
                                             Text(
                                                 status.replaceFirstChar { it.uppercase() },
                                                 style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
                                             )
                                         }
                                     }
                                 }
                                 IconButton(onClick = { confirmDelete = job }) {
-                                    Icon(Icons.Default.Delete, contentDescription = "Delete job")
+                                    Icon(
+                                        Icons.Default.Delete,
+                                        contentDescription = "Delete job",
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
                                 }
                             }
                         }
@@ -176,7 +182,7 @@ fun ScheduledJobsScreen(config: ServerConfig, container: AppContainer) {
                         .fillMaxWidth()
                         .heightIn(max = 420.dp)
                         .verticalScroll(rememberScrollState()),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(Spacing.sm),
                 ) {
                     DetailLine("ID", job.id)
                     DetailLine("Schedule", job.expression, monospace = true)
@@ -233,7 +239,7 @@ fun ScheduledJobsScreen(config: ServerConfig, container: AppContainer) {
             onDismissRequest = { if (!submitting) showAdd = false },
             title = { Text("Add Scheduled Job") },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Column(verticalArrangement = Arrangement.spacedBy(Spacing.sm)) {
                     OutlinedTextField(
                         value = name,
                         onValueChange = { name = it },
@@ -290,24 +296,6 @@ fun ScheduledJobsScreen(config: ServerConfig, container: AppContainer) {
             dismissButton = {
                 TextButton(onClick = { showAdd = false }, enabled = !submitting) { Text("Cancel") }
             },
-        )
-    }
-}
-
-@Composable
-private fun StatusChip(label: String, enabled: Boolean) {
-    Surface(
-        color = if (enabled) {
-            MaterialTheme.colorScheme.primaryContainer
-        } else {
-            MaterialTheme.colorScheme.surfaceVariant
-        },
-        shape = MaterialTheme.shapes.small,
-    ) {
-        Text(
-            label,
-            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
-            style = MaterialTheme.typography.labelSmall,
         )
     }
 }

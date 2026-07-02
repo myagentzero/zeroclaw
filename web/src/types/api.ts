@@ -163,8 +163,6 @@ export interface SkillSummary {
   name: string;
   description: string;
   version: string;
-  author: string | null;
-  tags: string[];
   tools: SkillToolSummary[];
   location: string | null;
   usage: SkillUsage | null;

@@ -107,29 +107,10 @@ when bootstrapping via `curl | bash`). You can override this path with `AGENTZER
 **Do not re-run `install.sh`** to restart -- it will rebuild the image and re-run onboarding.
 Instead, start a new container from the existing image and mount the persisted data directory.
 
-#### Using the repository docker-compose.yml
-
-The simplest way to run AgentZero long-term in Docker/Podman is with the provided
-`docker-compose.yml` at the repository root. It uses a named volume (`agentzero-data`)
-and sets `restart: unless-stopped` so the container survives reboots.
-
-```bash
-# Start (detached)
-docker compose up -d
-
-# Stop
-docker compose down
-
-# Restart after stopping
-docker compose up -d
-```
-
-Replace `docker` with `podman` if you use Podman.
-
 #### Manual container run (using install.sh data directory)
 
 If you installed via `./install.sh --docker` and want to reuse the `.agentzero-docker`
-data directory without compose:
+data directory:
 
 ```bash
 # Docker

@@ -2,18 +2,18 @@ import { useEffect, useState } from 'react';
 import type { ComponentType, ReactNode, SVGProps } from 'react';
 import {
   Activity,
+  CalendarClock,
   ChevronDown,
   Clock3,
   Cpu,
   Database,
   DollarSign,
-  Globe2,
   Hash,
   ShieldCheck,
   Sparkles,
 } from 'lucide-react';
-import type { CostSummary, StatusResponse } from '@/types/api';
-import { getCost, getStatus } from '@/lib/api';
+import type { CostSummary, CronJob, StatusResponse } from '@/types/api';
+import { getCost, getCronJobs, getStatus } from '@/lib/api';
 
 type DashboardSectionKey = 'cost' | 'tokens' | 'health';
 
@@ -44,6 +44,11 @@ function formatUptime(seconds: number): string {
 
 function formatUSD(value: number): string {
   return `$${value.toFixed(4)}`;
+}
+
+function countUpcomingJobs(jobs: CronJob[]): number {
+  const now = Date.now();
+  return jobs.filter((job) => job.enabled && Date.parse(job.next_run) > now).length;
 }
 
 function healthColor(status: string): string {
@@ -124,6 +129,7 @@ function CollapsibleSection({
 export default function Dashboard() {
   const [status, setStatus] = useState<StatusResponse | null>(null);
   const [cost, setCost] = useState<CostSummary | null>(null);
+  const [upcomingJobs, setUpcomingJobs] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [sectionsOpen, setSectionsOpen] = useState<DashboardSectionState>({
     cost: true,
@@ -141,6 +147,10 @@ export default function Dashboard() {
         const message = err instanceof Error ? err.message : 'Unknown dashboard load error';
         setError(message);
       });
+
+    getCronJobs()
+      .then((jobs) => setUpcomingJobs(countUpcomingJobs(jobs)))
+      .catch(() => setUpcomingJobs(null));
   }, []);
 
   const toggleSection = (section: DashboardSectionKey) => {
@@ -218,11 +228,11 @@ export default function Dashboard() {
 
         <article className="electric-card motion-rise motion-delay-3 p-4">
           <div className="metric-head">
-            <Globe2 className="h-4 w-4" />
-            <span>Gateway Port</span>
+            <CalendarClock className="h-4 w-4" />
+            <span>Scheduled Jobs</span>
           </div>
-          <p className="metric-value mt-3">:{status.gateway_port}</p>
-          <p className="metric-sub mt-1">{status.locale}</p>
+          <p className="metric-value mt-3">{upcomingJobs ?? '—'}</p>
+          <p className="metric-sub mt-1">Upcoming runs</p>
         </article>
 
         <article className="electric-card motion-rise motion-delay-4 p-4">

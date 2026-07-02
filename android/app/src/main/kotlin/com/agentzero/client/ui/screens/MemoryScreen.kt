@@ -15,10 +15,10 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FloatingActionButton
@@ -27,6 +27,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -36,13 +37,16 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.agentzero.client.AppContainer
 import com.agentzero.client.data.model.MemoryEntry
 import com.agentzero.client.data.model.ServerConfig
+import com.agentzero.client.ui.components.EmptyState
+import com.agentzero.client.ui.components.ErrorBanner
+import com.agentzero.client.ui.components.LoadingState
+import com.agentzero.client.ui.theme.Spacing
 import com.agentzero.client.ui.util.formatIsoDateTime
 import kotlinx.coroutines.launch
 
@@ -95,15 +99,17 @@ fun MemoryScreen(config: ServerConfig, container: AppContainer) {
             Modifier
                 .fillMaxSize()
                 .padding(padding)
-                .padding(12.dp),
+                .padding(Spacing.md),
+            verticalArrangement = Arrangement.spacedBy(Spacing.sm),
         ) {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
                 OutlinedTextField(
                     value = search,
                     onValueChange = { search = it },
                     modifier = Modifier.weight(1f),
                     label = { Text("Search") },
                     singleLine = true,
+                    shape = MaterialTheme.shapes.medium,
                 )
                 IconButton(onClick = { reload() }) {
                     Icon(Icons.Default.Search, contentDescription = "Search")
@@ -116,6 +122,7 @@ fun MemoryScreen(config: ServerConfig, container: AppContainer) {
                     readOnly = true,
                     modifier = Modifier.fillMaxWidth(),
                     label = { Text("Category") },
+                    shape = MaterialTheme.shapes.medium,
                     trailingIcon = {
                         Icon(Icons.Default.ArrowDropDown, contentDescription = "Select category")
                     },
@@ -141,20 +148,17 @@ fun MemoryScreen(config: ServerConfig, container: AppContainer) {
                 }
             }
 
-            error?.let {
-                Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(top = 8.dp))
-            }
+            error?.let { ErrorBanner(it, onRetry = ::reload) }
 
             when {
-                loading -> Column(
-                    Modifier.fillMaxSize(),
-                    verticalArrangement = Arrangement.Center,
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                ) { CircularProgressIndicator() }
+                loading -> LoadingState()
 
-                entries.isEmpty() -> Text("No memory entries found.", modifier = Modifier.padding(top = 24.dp))
+                entries.isEmpty() -> EmptyState(
+                    icon = Icons.Default.Psychology,
+                    title = "No memory entries found.",
+                )
 
-                else -> LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                else -> LazyColumn(verticalArrangement = Arrangement.spacedBy(Spacing.sm)) {
                     items(entries, key = { it.key }) { entry ->
                         Card(
                             modifier = Modifier
@@ -164,21 +168,38 @@ fun MemoryScreen(config: ServerConfig, container: AppContainer) {
                             Row(
                                 Modifier
                                     .fillMaxWidth()
-                                    .padding(12.dp),
+                                    .padding(Spacing.md),
                                 horizontalArrangement = Arrangement.SpaceBetween,
                             ) {
                                 Column(Modifier.weight(1f)) {
                                     Text(entry.key, style = MaterialTheme.typography.titleSmall)
-                                    Text(entry.category, style = MaterialTheme.typography.labelSmall)
+                                    Surface(
+                                        color = MaterialTheme.colorScheme.secondaryContainer,
+                                        shape = MaterialTheme.shapes.extraSmall,
+                                        modifier = Modifier.padding(top = 4.dp),
+                                    ) {
+                                        Text(
+                                            entry.category,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSecondaryContainer,
+                                            modifier = Modifier.padding(horizontal = Spacing.xs, vertical = 1.dp),
+                                        )
+                                    }
                                     Text(
                                         entry.content,
                                         maxLines = 2,
                                         overflow = TextOverflow.Ellipsis,
                                         style = MaterialTheme.typography.bodySmall,
+                                        modifier = Modifier.padding(top = Spacing.xs),
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
                                 }
                                 IconButton(onClick = { confirmDelete = entry }) {
-                                    Icon(Icons.Default.Delete, contentDescription = "Delete")
+                                    Icon(
+                                        Icons.Default.Delete,
+                                        contentDescription = "Delete",
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
                                 }
                             }
                         }
@@ -202,7 +223,7 @@ fun MemoryScreen(config: ServerConfig, container: AppContainer) {
                     item {
                         Text("Category: ${entry.category}")
                         Text("Created: ${formatIsoDateTime(entry.timestamp)}")
-                        Text(entry.content)
+                        Text(entry.content, modifier = Modifier.padding(top = Spacing.sm))
                     }
                 }
             },
@@ -240,7 +261,7 @@ fun MemoryScreen(config: ServerConfig, container: AppContainer) {
             onDismissRequest = { showAdd = false },
             title = { Text("Add Memory") },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Column(verticalArrangement = Arrangement.spacedBy(Spacing.sm)) {
                     OutlinedTextField(value = key, onValueChange = { key = it }, label = { Text("Key") })
                     OutlinedTextField(
                         value = content,
@@ -277,4 +298,3 @@ fun MemoryScreen(config: ServerConfig, container: AppContainer) {
         )
     }
 }
-

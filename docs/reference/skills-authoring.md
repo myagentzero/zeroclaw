@@ -15,8 +15,6 @@ Use SKILL.toml when your skill defines callable tools with typed parameters.
 name = "my-skill"
 description = "What this skill does"
 version = "1.0.0"
-author = "your-name"
-tags = ["productivity", "automation"]
 
 [[tools]]
 name = "run_lint"
@@ -39,10 +37,6 @@ agent. Optional YAML frontmatter provides metadata.
 name: code-review
 description: Review pull requests for common issues
 version: 1.0.0
-author: your-name
-tags:
-  - code-quality
-  - review
 ---
 
 # Code Review Skill
@@ -261,8 +255,6 @@ A skill that provides deployment tools with both shell and HTTP capabilities:
 name = "deploy-tools"
 description = "Deploy and monitor services"
 version = "1.0.0"
-author = "ops-team"
-tags = ["devops", "deployment"]
 
 [[tools]]
 name = "deploy"

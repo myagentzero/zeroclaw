@@ -281,8 +281,6 @@ pub async fn handle_api_skills(
                 "name": s.name,
                 "description": s.description,
                 "version": s.version,
-                "author": s.author,
-                "tags": s.tags,
                 "tools": s.tools.iter().map(|t| serde_json::json!({
                     "name": t.name,
                     "description": t.description,

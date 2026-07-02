@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -23,7 +24,8 @@ import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material3.Card
-import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -45,6 +47,9 @@ import com.agentzero.client.data.model.ServerConfig
 import com.agentzero.client.data.model.WorkspaceFileContent
 import com.agentzero.client.data.model.WorkspaceFileNode
 import com.agentzero.client.data.model.WorkspaceTree
+import com.agentzero.client.ui.components.ErrorBanner
+import com.agentzero.client.ui.components.LoadingState
+import com.agentzero.client.ui.theme.Spacing
 import kotlinx.coroutines.launch
 import org.json.JSONObject
 import java.util.Base64
@@ -95,20 +100,27 @@ fun WorkspaceScreen(config: ServerConfig, container: AppContainer) {
         }
     }
 
-    Column(Modifier.fillMaxSize().padding(12.dp)) {
-        treeData?.let { Text(it.workspace, style = MaterialTheme.typography.labelSmall, fontFamily = FontFamily.Monospace) }
-        error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+    Column(Modifier.fillMaxSize().padding(Spacing.md)) {
+        treeData?.let {
+            Text(
+                it.workspace,
+                style = MaterialTheme.typography.labelSmall,
+                fontFamily = FontFamily.Monospace,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(bottom = Spacing.sm),
+            )
+        }
+        error?.let { ErrorBanner(it, modifier = Modifier.padding(bottom = Spacing.sm)) }
 
         when {
-            loading -> Column(
-                Modifier.fillMaxSize(),
-                verticalArrangement = Arrangement.Center,
-                horizontalAlignment = Alignment.CenterHorizontally,
-            ) { CircularProgressIndicator() }
+            loading -> LoadingState()
 
-            treeData != null -> Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Card(Modifier.weight(0.4f)) {
-                    LazyColumn(Modifier.padding(8.dp)) {
+            treeData != null -> Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+                Card(
+                    Modifier.weight(0.4f),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)),
+                ) {
+                    LazyColumn(Modifier.padding(Spacing.sm)) {
                         treeData!!.tree.forEach { node ->
                             item {
                                 WorkspaceTreeNode(
@@ -123,32 +135,40 @@ fun WorkspaceScreen(config: ServerConfig, container: AppContainer) {
                 }
                 Card(Modifier.weight(0.6f)) {
                     when {
-                        fileLoading -> Column(
-                            Modifier.fillMaxSize(),
-                            verticalArrangement = Arrangement.Center,
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                        ) { CircularProgressIndicator() }
+                        fileLoading -> LoadingState()
 
-                        fileError != null -> Text(fileError!!, Modifier.padding(12.dp), color = MaterialTheme.colorScheme.error)
+                        fileError != null -> Text(
+                            fileError!!,
+                            Modifier.padding(Spacing.md),
+                            color = MaterialTheme.colorScheme.error,
+                        )
 
                         activeFile == null -> Text(
                             "Select a file to view or download",
-                            Modifier.padding(16.dp),
+                            Modifier.padding(Spacing.lg),
                             style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
 
-                        else -> Column(
-                            Modifier
-                                .fillMaxSize()
-                                .verticalScroll(rememberScrollState())
-                                .padding(12.dp),
-                        ) {
-                            Text(activeFile!!.path, style = MaterialTheme.typography.labelMedium)
+                        else -> Column(Modifier.fillMaxSize()) {
                             Text(
-                                renderContent(activeFile!!),
-                                fontFamily = FontFamily.Monospace,
-                                style = MaterialTheme.typography.bodySmall,
+                                activeFile!!.path,
+                                style = MaterialTheme.typography.labelMedium,
+                                modifier = Modifier.padding(Spacing.md),
                             )
+                            HorizontalDivider()
+                            Column(
+                                Modifier
+                                    .fillMaxSize()
+                                    .verticalScroll(rememberScrollState())
+                                    .padding(Spacing.md),
+                            ) {
+                                Text(
+                                    renderContent(activeFile!!),
+                                    fontFamily = FontFamily.Monospace,
+                                    style = MaterialTheme.typography.bodySmall,
+                                )
+                            }
                         }
                     }
                 }
@@ -174,11 +194,20 @@ private fun WorkspaceTreeNode(
             Modifier
                 .fillMaxWidth()
                 .clickable { open = !open }
-                .padding(start = (depth * 12).dp, top = 4.dp, bottom = 4.dp),
+                .padding(start = (depth * 14).dp, top = 6.dp, bottom = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Icon(if (open) Icons.Default.FolderOpen else Icons.Default.Folder, null)
-            Text(node.name, modifier = Modifier.padding(start = 6.dp))
+            Icon(
+                if (open) Icons.Default.FolderOpen else Icons.Default.Folder,
+                contentDescription = null,
+                modifier = Modifier.size(18.dp),
+                tint = MaterialTheme.colorScheme.primary,
+            )
+            Text(
+                node.name,
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.padding(start = Spacing.xs),
+            )
         }
         if (open) {
             node.children.orEmpty().forEach { child ->
@@ -189,15 +218,21 @@ private fun WorkspaceTreeNode(
         Row(
             Modifier
                 .fillMaxWidth()
-                .padding(start = (depth * 12).dp, top = 4.dp, bottom = 4.dp),
+                .padding(start = (depth * 14).dp, top = 6.dp, bottom = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Icon(Icons.Default.Description, null)
+            Icon(
+                Icons.Default.Description,
+                contentDescription = null,
+                modifier = Modifier.size(18.dp),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
             Text(
                 node.name,
+                style = MaterialTheme.typography.bodySmall,
                 modifier = Modifier
                     .weight(1f)
-                    .padding(start = 6.dp)
+                    .padding(start = Spacing.xs)
                     .clickable(enabled = canView) { onOpen(node) },
                 color = if (canView) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
             )

@@ -6,24 +6,28 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Inbox
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -47,6 +51,9 @@ import com.agentzero.client.AppContainer
 import com.agentzero.client.data.model.LogEntry
 import com.agentzero.client.data.model.ServerConfig
 import com.agentzero.client.data.model.SseEvent
+import com.agentzero.client.ui.components.EmptyState
+import com.agentzero.client.ui.components.StatusChip
+import com.agentzero.client.ui.theme.Spacing
 import com.agentzero.client.ui.util.formatIsoDateTime
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.collectLatest
@@ -131,18 +138,23 @@ fun MissionControlScreen(config: ServerConfig, container: AppContainer) {
         Row(
             Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 12.dp, vertical = 8.dp),
+                .padding(horizontal = Spacing.md, vertical = Spacing.sm),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Column {
-                Text("Mission Control", style = MaterialTheme.typography.titleMedium)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Mission Control", style = MaterialTheme.typography.titleMedium)
+                    Spacer(Modifier.size(Spacing.sm))
+                    StatusChip(if (connected) "Live" else "Offline", active = connected)
+                }
                 Text(
-                    "${if (connected) "Connected" else "Disconnected"} · ${filtered.size} events",
+                    "${filtered.size} events",
                     style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(Spacing.xs)) {
                 if (!autoScroll) {
                     TextButton(onClick = {
                         scope.launch {
@@ -150,12 +162,12 @@ fun MissionControlScreen(config: ServerConfig, container: AppContainer) {
                             autoScroll = true
                         }
                     }) {
-                        Icon(Icons.Default.KeyboardArrowDown, null)
+                        Icon(Icons.Default.KeyboardArrowDown, null, modifier = Modifier.size(18.dp))
                         Text("Bottom")
                     }
                 }
                 TextButton(onClick = { paused = !paused }) {
-                    Icon(if (paused) Icons.Default.PlayArrow else Icons.Default.Pause, null)
+                    Icon(if (paused) Icons.Default.PlayArrow else Icons.Default.Pause, null, modifier = Modifier.size(18.dp))
                     Text(if (paused) "Resume" else "Pause")
                 }
             }
@@ -165,8 +177,8 @@ fun MissionControlScreen(config: ServerConfig, container: AppContainer) {
             FlowRow(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 12.dp),
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    .padding(horizontal = Spacing.md, vertical = Spacing.xs),
+                horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
             ) {
                 allTypes.forEach { type ->
                     FilterChip(
@@ -187,19 +199,21 @@ fun MissionControlScreen(config: ServerConfig, container: AppContainer) {
             }
         }
 
+        HorizontalDivider()
+
         LazyColumn(
             state = listState,
             modifier = Modifier
                 .weight(1f)
                 .fillMaxWidth()
-                .padding(12.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
+                .padding(Spacing.md),
+            verticalArrangement = Arrangement.spacedBy(Spacing.sm),
         ) {
             if (filtered.isEmpty()) {
                 item {
-                    Text(
-                        if (paused) "Log streaming is paused." else "Waiting for events...",
-                        modifier = Modifier.padding(top = 32.dp),
+                    EmptyState(
+                        icon = Icons.Default.Inbox,
+                        title = if (paused) "Log streaming is paused." else "Waiting for events…",
                     )
                 }
             }
@@ -208,30 +222,32 @@ fun MissionControlScreen(config: ServerConfig, container: AppContainer) {
                     modifier = Modifier
                         .fillMaxWidth()
                         .clickable { selectedEntry = entry },
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
                 ) {
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(12.dp),
-                        verticalArrangement = Arrangement.spacedBy(6.dp),
+                            .padding(Spacing.md),
+                        verticalArrangement = Arrangement.spacedBy(Spacing.xs),
                     ) {
                         Text(
                             formatIsoDateTime(entry.event.timestamp),
                             style = MaterialTheme.typography.labelSmall,
                             fontFamily = FontFamily.Monospace,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                         Row(
                             modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            horizontalArrangement = Arrangement.spacedBy(Spacing.sm),
                             verticalAlignment = Alignment.Top,
                         ) {
                             Surface(
-                                shape = RoundedCornerShape(4.dp),
+                                shape = MaterialTheme.shapes.extraSmall,
                                 color = MaterialTheme.colorScheme.secondaryContainer,
                             ) {
                                 Text(
                                     entry.event.type,
-                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                    modifier = Modifier.padding(horizontal = Spacing.xs, vertical = 2.dp),
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSecondaryContainer,
                                 )

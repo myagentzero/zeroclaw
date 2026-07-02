@@ -25,10 +25,6 @@ pub struct Skill {
     pub description: String,
     pub version: String,
     #[serde(default)]
-    pub author: Option<String>,
-    #[serde(default)]
-    pub tags: Vec<String>,
-    #[serde(default)]
     pub tools: Vec<SkillTool>,
     #[serde(default)]
     pub prompts: Vec<String>,
@@ -65,10 +61,6 @@ struct SkillMeta {
     description: String,
     #[serde(default = "default_version")]
     version: String,
-    #[serde(default)]
-    author: Option<String>,
-    #[serde(default)]
-    tags: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -76,8 +68,6 @@ struct SkillMarkdownMeta {
     name: Option<String>,
     description: Option<String>,
     version: Option<String>,
-    author: Option<String>,
-    tags: Vec<String>,
 }
 
 fn default_version() -> String {
@@ -174,16 +164,6 @@ fn load_open_skills_from_directory(skills_dir: &Path, allow_scripts: bool) -> Ve
     load_skills_from_directory_internal(skills_dir, allow_scripts, SkillSource::OpenSkills)
 }
 
-fn finalize_open_skill(mut skill: Skill) -> Skill {
-    if !skill.tags.iter().any(|tag| tag == "open-skills") {
-        skill.tags.push("open-skills".to_string());
-    }
-    if skill.author.is_none() {
-        skill.author = Some("myagentzero/open-skills".to_string());
-    }
-    skill
-}
-
 #[derive(Clone, Copy)]
 enum SkillSource {
     Workspace,
@@ -241,16 +221,11 @@ fn load_skills_from_directory_internal(
 
         if manifest_path.exists() {
             if let Ok(skill) = load_skill_toml(&manifest_path) {
-                let skill = match source {
-                    SkillSource::Workspace => skill,
-                    SkillSource::OpenSkills => finalize_open_skill(skill),
-                };
                 skills.push(skill);
             }
         } else if md_path.exists() {
             let loaded = match source {
                 SkillSource::Workspace => load_skill_md(&md_path, &path),
-                // load_open_skill_md already applies finalize_open_skill internally.
                 SkillSource::OpenSkills => load_open_skill_md(&md_path),
             };
             if let Ok(skill) = loaded {
@@ -516,8 +491,6 @@ fn load_skill_toml(path: &Path) -> Result<Skill> {
         name: manifest.skill.name,
         description: manifest.skill.description,
         version: manifest.skill.version,
-        author: manifest.skill.author,
-        tags: manifest.skill.tags,
         tools: manifest.tools,
         prompts: manifest.prompts,
         location: Some(path.to_path_buf()),
@@ -542,8 +515,6 @@ fn load_skill_md(path: &Path, dir: &Path) -> Result<Skill> {
             .filter(|value| !value.trim().is_empty())
             .unwrap_or_else(|| extract_description(&parsed.body)),
         version: parsed.meta.version.unwrap_or_else(default_version),
-        author: parsed.meta.author,
-        tags: parsed.meta.tags,
         tools: Vec::new(),
         prompts: vec![parsed.body],
         location: Some(path.to_path_buf()),
@@ -567,7 +538,7 @@ fn load_open_skill_md(path: &Path) -> Result<Skill> {
     } else {
         file_stem
     };
-    Ok(finalize_open_skill(Skill {
+    Ok(Skill {
         name: parsed.meta.name.unwrap_or(name),
         description: parsed
             .meta
@@ -578,15 +549,10 @@ fn load_open_skill_md(path: &Path) -> Result<Skill> {
             .meta
             .version
             .unwrap_or_else(|| "open-skills".to_string()),
-        author: parsed
-            .meta
-            .author
-            .or_else(|| Some("myagentzero/open-skills".to_string())),
-        tags: parsed.meta.tags,
         tools: Vec::new(),
         prompts: vec![parsed.body],
         location: Some(path.to_path_buf()),
-    }))
+    })
 }
 
 struct ParsedSkillMarkdown {
@@ -608,24 +574,13 @@ fn parse_skill_markdown(content: &str) -> ParsedSkillMarkdown {
 
 /// Lightweight YAML-like frontmatter parser for simple `key: value` pairs.
 /// Replaces `serde_yaml` to avoid pulling in the full YAML parser (~30KB)
-/// for a struct with only 5 optional string fields.
+/// for a struct with only 3 optional string fields.
+///
+/// Only `name`, `description`, and `version` are recognized, matching the
+/// standard SKILL.md frontmatter fields. Any other keys are ignored.
 fn parse_simple_frontmatter(s: &str) -> SkillMarkdownMeta {
     let mut meta = SkillMarkdownMeta::default();
-    let mut collecting_tags = false;
     for line in s.lines() {
-        // Handle YAML list items under `tags:` (e.g. "  - parser")
-        if collecting_tags {
-            let trimmed = line.trim();
-            if let Some(item) = trimmed.strip_prefix("- ") {
-                let tag = item.trim().trim_matches('"').trim_matches('\'');
-                if !tag.is_empty() {
-                    meta.tags.push(tag.to_string());
-                }
-                continue;
-            }
-            // Non-list-item line → stop collecting tags
-            collecting_tags = false;
-        }
         let Some((key, val)) = line.split_once(':') else {
             continue;
         };
@@ -635,21 +590,6 @@ fn parse_simple_frontmatter(s: &str) -> SkillMarkdownMeta {
             "name" => meta.name = Some(val.to_string()),
             "description" => meta.description = Some(val.to_string()),
             "version" => meta.version = Some(val.to_string()),
-            "author" => meta.author = Some(val.to_string()),
-            "tags" => {
-                if val.is_empty() {
-                    // YAML block list follows on subsequent lines
-                    collecting_tags = true;
-                } else {
-                    // Inline: [a, b, c] or comma-separated
-                    let val = val.trim_start_matches('[').trim_end_matches(']');
-                    meta.tags = val
-                        .split(',')
-                        .map(|t| t.trim().trim_matches('"').trim_matches('\'').to_string())
-                        .filter(|t| !t.is_empty())
-                        .collect();
-                }
-            }
             _ => {}
         }
     }
@@ -860,9 +800,7 @@ pub fn init_skills_dir(workspace_dir: &Path) -> Result<()> {
              [skill]\n\
              name = \"my-skill\"\n\
              description = \"What this skill does\"\n\
-             version = \"0.1.0\"\n\
-             author = \"your-name\"\n\
-             tags = [\"productivity\", \"automation\"]\n\n\
+             version = \"0.1.0\"\n\n\
              # Shell tool — runs via sh -c (60s timeout, sandboxed env)\n\
              [[tools]]\n\
              name = \"my_tool\"\n\
@@ -883,7 +821,7 @@ pub fn init_skills_dir(workspace_dir: &Path) -> Result<()> {
              required parameter the agent provides at call time.\n\n\
              ## SKILL.md format (simpler)\n\n\
              Just write a markdown file with instructions for the agent.\n\
-             YAML frontmatter is supported for `name`, `description`, `version`, `author`, and `tags`.\n\
+             YAML frontmatter is supported for `name`, `description`, and `version`.\n\
              The agent will read it and follow the instructions.\n\n\
              ## Testing skills\n\n\
              Add a `TEST.sh` file with test cases: `command | exit_code | output_pattern`\n\n\
@@ -1140,9 +1078,6 @@ pub fn handle_command(command: crate::SkillCommands, config: &crate::config::Con
                                 .join(", ")
                         );
                     }
-                    if !skill.tags.is_empty() {
-                        println!("    Tags:  {}", skill.tags.join(", "));
-                    }
                 }
             }
             println!();
@@ -1302,7 +1237,6 @@ mod tests {
 name = "test-skill"
 description = "A test skill"
 version = "1.0.0"
-tags = ["test"]
 
 [[tools]]
 name = "hello"
@@ -1348,6 +1282,28 @@ command = "echo hello"
 
         fs::write(
             skill_dir.join("SKILL.md"),
+            "---\nname: pdf\ndescription: Use this skill for PDFs\nversion: 1.2.3\n---\n# PDF Processing Guide\nExtract text carefully.\n",
+        )
+        .unwrap();
+
+        let skills = load_skills(dir.path());
+        assert_eq!(skills.len(), 1);
+        assert_eq!(skills[0].name, "pdf");
+        assert_eq!(skills[0].description, "Use this skill for PDFs");
+        assert_eq!(skills[0].version, "1.2.3");
+        assert!(skills[0].prompts[0].contains("# PDF Processing Guide"));
+        assert!(!skills[0].prompts[0].contains("name: pdf"));
+    }
+
+    #[test]
+    fn load_skill_from_md_frontmatter_ignores_non_standard_fields() {
+        let dir = tempfile::tempdir().unwrap();
+        let skills_dir = dir.path().join("skills");
+        let skill_dir = skills_dir.join("md-skill");
+        fs::create_dir_all(&skill_dir).unwrap();
+
+        fs::write(
+            skill_dir.join("SKILL.md"),
             "---\nname: pdf\ndescription: Use this skill for PDFs\nversion: 1.2.3\nauthor: maintainer\ntags:\n  - docs\n  - pdf\n---\n# PDF Processing Guide\nExtract text carefully.\n",
         )
         .unwrap();
@@ -1357,10 +1313,6 @@ command = "echo hello"
         assert_eq!(skills[0].name, "pdf");
         assert_eq!(skills[0].description, "Use this skill for PDFs");
         assert_eq!(skills[0].version, "1.2.3");
-        assert_eq!(skills[0].author.as_deref(), Some("maintainer"));
-        assert_eq!(skills[0].tags, vec!["docs", "pdf"]);
-        assert!(skills[0].prompts[0].contains("# PDF Processing Guide"));
-        assert!(!skills[0].prompts[0].contains("name: pdf"));
     }
 
     #[test]
@@ -1375,8 +1327,6 @@ command = "echo hello"
             name: "test".to_string(),
             description: "A test".to_string(),
             version: "1.0.0".to_string(),
-            author: None,
-            tags: vec![],
             tools: vec![],
             prompts: vec!["Do the thing.".to_string()],
             location: None,
@@ -1393,8 +1343,6 @@ command = "echo hello"
             name: "test".to_string(),
             description: "A test".to_string(),
             version: "1.0.0".to_string(),
-            author: None,
-            tags: vec![],
             tools: vec![SkillTool {
                 name: "run".to_string(),
                 description: "Run task".to_string(),
@@ -1502,8 +1450,6 @@ command = "echo hello"
 name = "multi-tool"
 description = "Has many tools"
 version = "2.0.0"
-author = "tester"
-tags = ["automation", "devops"]
 
 [[tools]]
 name = "build"
@@ -1531,8 +1477,6 @@ command = "https://api.example.com/deploy"
         let s = &skills[0];
         assert_eq!(s.name, "multi-tool");
         assert_eq!(s.version, "2.0.0");
-        assert_eq!(s.author.as_deref(), Some("tester"));
-        assert_eq!(s.tags, vec!["automation", "devops"]);
         assert_eq!(s.tools.len(), 3);
         assert_eq!(s.tools[0].name, "build");
         assert_eq!(s.tools[1].kind, "shell");
@@ -1559,8 +1503,6 @@ description = "Bare minimum"
         let skills = load_skills(dir.path());
         assert_eq!(skills.len(), 1);
         assert_eq!(skills[0].version, "0.1.0"); // default version
-        assert!(skills[0].author.is_none());
-        assert!(skills[0].tags.is_empty());
         assert!(skills[0].tools.is_empty());
     }
 
@@ -1597,8 +1539,6 @@ description = "Bare minimum"
             name: "weather".to_string(),
             description: "Get weather".to_string(),
             version: "1.0.0".to_string(),
-            author: None,
-            tags: vec![],
             tools: vec![SkillTool {
                 name: "get_weather".to_string(),
                 description: "Fetch forecast".to_string(),
@@ -1624,8 +1564,6 @@ description = "Bare minimum"
             name: "xml<skill>".to_string(),
             description: "A & B".to_string(),
             version: "1.0.0".to_string(),
-            author: None,
-            tags: vec![],
             tools: vec![],
             prompts: vec!["Use <tool> & check \"quotes\".".to_string()],
             location: None,
@@ -1823,9 +1761,7 @@ description = "Bare minimum"
             skills[0].description,
             "Use this skill whenever the user needs PDF help."
         );
-        assert_eq!(skills[0].author.as_deref(), Some("community"));
-        assert!(skills[0].tags.iter().any(|tag| tag == "parser"));
-        assert!(skills[0].tags.iter().any(|tag| tag == "open-skills"));
+        // Non-standard frontmatter fields (author, tags) are ignored.
         assert!(skills[0].prompts[0].contains("# PDF Guide"));
         assert!(!skills[0].prompts[0].contains("description: Use this skill"));
     }
