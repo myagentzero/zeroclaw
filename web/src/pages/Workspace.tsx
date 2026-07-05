@@ -38,7 +38,7 @@ interface TreeNodeProps {
 }
 
 function TreeNode({ node, onOpen, onDownload, depth }: TreeNodeProps) {
-  const [open, setOpen] = useState(depth === 0);
+  const [open, setOpen] = useState(false);
   const isDir = node.kind === 'dir';
   const canView = !isDir && isViewable(node.name);
   const canDownload = !isDir && isDownloadable(node.name);

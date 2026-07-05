@@ -4092,17 +4092,24 @@ pub struct ReliabilityConfig {
     ///   credential resolution.
     #[serde(default)]
     pub fallback_api_keys: std::collections::HashMap<String, String>,
-    /// Additional API keys for round-robin rotation on rate-limit (429) errors.
-    /// The primary `api_key` is always tried first; these are extras.
-    #[serde(default)]
-    pub api_keys: Vec<String>,
-    /// Per-model fallback chains. When a model fails, try these alternatives in order.
+    /// Per-model fallback chains, keyed by model name. When a model fails, try
+    /// these alternative model names in order, against every provider in
+    /// priority order.
     /// Example: `{ "claude-opus-4-20250514" = ["claude-sonnet-4-20250514", "gpt-4o"] }`
-    ///
-    /// Compatibility behavior: keys matching configured provider names are treated
-    /// as provider-scoped remap chains during provider fallback.
     #[serde(default)]
     pub model_fallbacks: std::collections::HashMap<String, Vec<String>>,
+    /// Provider-scoped model remaps, keyed by provider/fallback entry name
+    /// (must exactly match an entry in `fallback_providers`, or the primary
+    /// provider name). When that provider is tried, retry it with these model
+    /// names instead of the original model.
+    /// Example: `{ "openrouter" = ["anthropic/claude-sonnet-4"] }`
+    ///
+    /// Contract:
+    /// - Default/omitted (`{}`): fallback providers are tried with the original model name unchanged.
+    /// - Compatibility: additive and non-breaking for existing configs that omit this field.
+    /// - Distinct from `model_fallbacks`, which is keyed by model name rather than provider name.
+    #[serde(default)]
+    pub provider_model_overrides: std::collections::HashMap<String, Vec<String>>,
     /// Initial backoff for channel/daemon restarts.
     #[serde(default = "default_channel_backoff_secs")]
     pub channel_initial_backoff_secs: u64,
@@ -4148,8 +4155,8 @@ impl Default for ReliabilityConfig {
             provider_backoff_ms: default_provider_backoff_ms(),
             fallback_providers: Vec::new(),
             fallback_api_keys: std::collections::HashMap::new(),
-            api_keys: Vec::new(),
             model_fallbacks: std::collections::HashMap::new(),
+            provider_model_overrides: std::collections::HashMap::new(),
             channel_initial_backoff_secs: default_channel_backoff_secs(),
             channel_max_backoff_secs: default_channel_backoff_max_secs(),
             scheduler_poll_secs: default_scheduler_poll_secs(),
@@ -6877,11 +6884,6 @@ impl Config {
                 &mut config.storage.provider.config.db_url,
                 "config.storage.provider.config.db_url",
             )?;
-            decrypt_vec_secrets(
-                &store,
-                &mut config.reliability.api_keys,
-                "config.reliability.api_keys",
-            )?;
             decrypt_map_secrets(
                 &store,
                 &mut config.reliability.fallback_api_keys,
@@ -8636,11 +8638,6 @@ impl Config {
             &mut config_to_save.storage.provider.config.db_url,
             "config.storage.provider.config.db_url",
         )?;
-        encrypt_vec_secrets(
-            &store,
-            &mut config_to_save.reliability.api_keys,
-            "config.reliability.api_keys",
-        )?;
         encrypt_map_secrets(
             &store,
             &mut config_to_save.reliability.fallback_api_keys,
@@ -9723,7 +9720,6 @@ compact_context = true
         config.browser.computer_use.api_key = Some("browser-credential".into());
         config.web_search.brave_api_key = Some("brave-credential".into());
         config.storage.provider.config.db_url = Some("postgres://user:pw@host/db".into());
-        config.reliability.api_keys = vec!["backup-credential".into()];
         config.reliability.fallback_api_keys.insert(
             "custom:https://api-a.example.com/v1".into(),
             "fallback-a-credential".into(),
@@ -9836,9 +9832,6 @@ compact_context = true
             "postgres://user:pw@host/db"
         );
 
-        let reliability_key = &stored.reliability.api_keys[0];
-        assert!(crate::security::SecretStore::is_encrypted(reliability_key));
-        assert_eq!(store.decrypt(reliability_key).unwrap(), "backup-credential");
         let fallback_key = stored
             .reliability
             .fallback_api_keys

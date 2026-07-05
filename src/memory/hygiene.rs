@@ -68,7 +68,10 @@ pub fn run_if_due(config: &MemoryConfig, workspace_dir: &Path) -> Result<()> {
         )?,
         pruned_daily_rows: prune_daily_rows(workspace_dir, config.daily_retention_days)?,
         pruned_system_rows: prune_system_rows(workspace_dir, config.system_retention_days)?,
-        pruned_auto_core_rows: prune_auto_core_rows(workspace_dir, config.core_auto_retention_days)?,
+        pruned_auto_core_rows: prune_auto_core_rows(
+            workspace_dir,
+            config.core_auto_retention_days,
+        )?,
     };
 
     prune_cost_records(workspace_dir, config.cost_retention_days)?;
@@ -500,7 +503,7 @@ fn prune_cost_records(workspace_dir: &Path, retention_days: u32) -> Result<()> {
                     if let Some(timestamp) = record.get("usage").and_then(|u| u.get("timestamp")) {
                         if let Some(ts_str) = timestamp.as_str() {
                             if ts_str >= cutoff.as_str() {
-                                writeln!(writer, "{}", record.to_string()).with_context(|| {
+                                writeln!(writer, "{record}").with_context(|| {
                                     format!(
                                         "Failed to write cost record to {}",
                                         temp_file.display()
@@ -831,8 +834,8 @@ mod tests {
 
         let cost_path = state_dir.join("costs.jsonl");
         let mut file = fs::File::create(&cost_path).unwrap();
-        writeln!(file, "{}", old_record.to_string()).unwrap();
-        writeln!(file, "{}", recent_record.to_string()).unwrap();
+        writeln!(file, "{old_record}").unwrap();
+        writeln!(file, "{recent_record}").unwrap();
         file.sync_all().unwrap();
 
         prune_cost_records(workspace, 60).unwrap();
@@ -858,17 +861,32 @@ mod tests {
 
         let mem = SqliteMemory::new(workspace).unwrap();
         // Old auto_ Core row — should be pruned
-        mem.store("auto_old_fact", "stale extracted fact", MemoryCategory::Core, None)
-            .await
-            .unwrap();
+        mem.store(
+            "auto_old_fact",
+            "stale extracted fact",
+            MemoryCategory::Core,
+            None,
+        )
+        .await
+        .unwrap();
         // Recent auto_ Core row — should survive
-        mem.store("auto_recent_fact", "fresh extracted fact", MemoryCategory::Core, None)
-            .await
-            .unwrap();
+        mem.store(
+            "auto_recent_fact",
+            "fresh extracted fact",
+            MemoryCategory::Core,
+            None,
+        )
+        .await
+        .unwrap();
         // Old non-auto_ Core row (user-created) — should survive regardless of age
-        mem.store("user_preference", "user prefers Rust", MemoryCategory::Core, None)
-            .await
-            .unwrap();
+        mem.store(
+            "user_preference",
+            "user prefers Rust",
+            MemoryCategory::Core,
+            None,
+        )
+        .await
+        .unwrap();
         drop(mem);
 
         let db_path = workspace.join("memory").join("brain.db");
@@ -912,6 +930,9 @@ mod tests {
         let workspace = tmp.path();
         // No DB exists — prune_auto_core_rows must return 0 cleanly
         let result = prune_auto_core_rows(workspace, 0).unwrap();
-        assert_eq!(result, 0, "retention_days=0 should skip pruning and return 0");
+        assert_eq!(
+            result, 0,
+            "retention_days=0 should skip pruning and return 0"
+        );
     }
 }

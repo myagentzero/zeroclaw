@@ -1662,11 +1662,7 @@ async fn run_memory_task(
     fetch_memory(&client, &base_url, auth_header.as_ref(), None, &tx).await;
 
     // Action loop — run on a blocking thread since mpsc::Receiver is sync
-    loop {
-        let action = match actions.recv() {
-            Ok(a) => a,
-            Err(_) => break,
-        };
+    while let Ok(action) = actions.recv() {
         match action {
             Action::FetchMemory { query } => {
                 fetch_memory(
@@ -1790,16 +1786,12 @@ async fn run_cron_task(
 
     let auth_header = token.map(|t| format!("Bearer {t}"));
 
-    fetch_cron(&client, &base_url, &auth_header, &tx).await;
+    fetch_cron(&client, &base_url, auth_header.as_ref(), &tx).await;
 
-    loop {
-        let action = match actions.recv() {
-            Ok(a) => a,
-            Err(_) => break,
-        };
+    while let Ok(action) = actions.recv() {
         match action {
             CronAction::Fetch => {
-                fetch_cron(&client, &base_url, &auth_header, &tx).await;
+                fetch_cron(&client, &base_url, auth_header.as_ref(), &tx).await;
             }
             CronAction::Delete { id } => {
                 let url = format!("{base_url}/api/cron/{id}");
@@ -1829,7 +1821,7 @@ async fn run_cron_task(
 async fn fetch_cron(
     client: &reqwest::Client,
     base_url: &str,
-    auth_header: &Option<String>,
+    auth_header: Option<&String>,
     tx: &mpsc::SyncSender<Msg>,
 ) {
     let url = format!("{base_url}/api/cron");
@@ -1945,16 +1937,12 @@ async fn run_costs_task(
 
     let auth_header = token.map(|t| format!("Bearer {t}"));
 
-    fetch_costs(&client, &base_url, &auth_header, &tx).await;
+    fetch_costs(&client, &base_url, auth_header.as_ref(), &tx).await;
 
-    loop {
-        let action = match actions.recv() {
-            Ok(a) => a,
-            Err(_) => break,
-        };
+    while let Ok(action) = actions.recv() {
         match action {
             CostsAction::Fetch => {
-                fetch_costs(&client, &base_url, &auth_header, &tx).await;
+                fetch_costs(&client, &base_url, auth_header.as_ref(), &tx).await;
             }
         }
     }
@@ -1963,7 +1951,7 @@ async fn run_costs_task(
 async fn fetch_costs(
     client: &reqwest::Client,
     base_url: &str,
-    auth_header: &Option<String>,
+    auth_header: Option<&String>,
     tx: &mpsc::SyncSender<Msg>,
 ) {
     let cost_req = {
@@ -2034,16 +2022,12 @@ async fn run_metrics_task(
 
     let auth_header = token.map(|t| format!("Bearer {t}"));
 
-    fetch_metrics(&client, &base_url, &auth_header, &tx).await;
+    fetch_metrics(&client, &base_url, auth_header.as_ref(), &tx).await;
 
-    loop {
-        let action = match actions.recv() {
-            Ok(a) => a,
-            Err(_) => break,
-        };
+    while let Ok(action) = actions.recv() {
         match action {
             MetricsAction::Fetch => {
-                fetch_metrics(&client, &base_url, &auth_header, &tx).await;
+                fetch_metrics(&client, &base_url, auth_header.as_ref(), &tx).await;
             }
         }
     }
@@ -2052,7 +2036,7 @@ async fn run_metrics_task(
 async fn fetch_metrics(
     client: &reqwest::Client,
     base_url: &str,
-    auth_header: &Option<String>,
+    auth_header: Option<&String>,
     tx: &mpsc::SyncSender<Msg>,
 ) {
     let url = format!("{base_url}/metrics");
@@ -2631,10 +2615,8 @@ fn handle_events_key(s: &mut EventsState, key: crossterm::event::KeyEvent) {
         match key.code {
             KeyCode::Esc | KeyCode::Char('f') => s.filter_mode = false,
             KeyCode::Left => s.filter_cursor = s.filter_cursor.saturating_sub(1),
-            KeyCode::Right => {
-                if s.filter_cursor + 1 < s.all_types.len() {
-                    s.filter_cursor += 1;
-                }
+            KeyCode::Right if s.filter_cursor + 1 < s.all_types.len() => {
+                s.filter_cursor += 1;
             }
             KeyCode::Char(' ') => {
                 if let Some(t) = s.all_types.get(s.filter_cursor).cloned() {
@@ -2663,10 +2645,8 @@ fn handle_events_key(s: &mut EventsState, key: crossterm::event::KeyEvent) {
                     s.scroll_down();
                 }
             }
-            KeyCode::Enter => {
-                if !s.filtered.is_empty() {
-                    s.detail_open = true;
-                }
+            KeyCode::Enter if !s.filtered.is_empty() => {
+                s.detail_open = true;
             }
             _ => {}
         }
@@ -2745,15 +2725,11 @@ fn handle_memory_key(
                         s.move_down(APPROX_VISIBLE);
                     }
                 }
-                KeyCode::Enter => {
-                    if s.selected().is_some() {
-                        s.mode = MemoryMode::Detail;
-                    }
+                KeyCode::Enter if s.selected().is_some() => {
+                    s.mode = MemoryMode::Detail;
                 }
-                KeyCode::Char('d') => {
-                    if s.selected().is_some() {
-                        s.mode = MemoryMode::ConfirmDelete;
-                    }
+                KeyCode::Char('d') if s.selected().is_some() => {
+                    s.mode = MemoryMode::ConfirmDelete;
                 }
                 _ => {}
             }
@@ -2861,15 +2837,11 @@ fn handle_cron_key(
                         s.move_down(APPROX_VISIBLE);
                     }
                 }
-                KeyCode::Enter => {
-                    if s.selected().is_some() {
-                        s.mode = CronMode::Detail;
-                    }
+                KeyCode::Enter if s.selected().is_some() => {
+                    s.mode = CronMode::Detail;
                 }
-                KeyCode::Char('d') => {
-                    if s.selected().is_some() {
-                        s.mode = CronMode::ConfirmDelete;
-                    }
+                KeyCode::Char('d') if s.selected().is_some() => {
+                    s.mode = CronMode::ConfirmDelete;
                 }
                 _ => {}
             }

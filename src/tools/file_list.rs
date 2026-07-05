@@ -215,8 +215,8 @@ mod tests {
         let result = tool.execute(json!({"path": "."})).await.unwrap();
 
         assert!(result.success, "listing should succeed: {:?}", result.error);
-        let _output: Value = serde_json::from_str(&result.output).unwrap();
-        let array = _output.as_array().unwrap();
+        let output: Value = serde_json::from_str(&result.output).unwrap();
+        let array = output.as_array().unwrap();
         assert_eq!(array.len(), 3);
 
         let names: Vec<&str> = array.iter().filter_map(|e| e["name"].as_str()).collect();

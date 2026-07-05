@@ -836,7 +836,6 @@ Screenshot captured successfully."#;
         assert!(prompt.contains("## Shell Policy"));
     }
 
-
     #[test]
     fn finalize_ws_response_uses_prompt_mode_tool_output_when_final_text_empty() {
         let tools: Vec<Box<dyn Tool>> = vec![Box::new(MockBrowserTool)];

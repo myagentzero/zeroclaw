@@ -374,7 +374,8 @@ private fun ChatBubble(message: ChatMessage) {
                     color = if (isUser) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Text(
-                    SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(message.timestampMillis)),
+                    SimpleDateFormat("MMM d, HH:mm", Locale.getDefault())
+                        .format(Date(message.timestampMillis)),
                     style = MaterialTheme.typography.labelSmall,
                     modifier = Modifier.padding(top = 2.dp),
                     color = if (isUser) MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.7f)

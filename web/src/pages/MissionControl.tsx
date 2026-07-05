@@ -93,8 +93,8 @@ function formatToolCallStartDetail(event: SSEEvent): string {
 }
 
 function formatTimestamp(ts?: string): string {
-  if (!ts) return new Date().toLocaleTimeString();
-  return new Date(ts).toLocaleTimeString();
+  if (!ts) return new Date().toLocaleString();
+  return new Date(ts).toLocaleString();
 }
 
 function eventTypeBadgeColor(type: string): string {

@@ -76,7 +76,7 @@ impl DiagItem {
 // ── Public entry points ──────────────────────────────────────────
 
 /// Run diagnostics and return structured results (for API/web dashboard).
-pub fn diagnose(config: &Config) -> Vec<DiagResult> {
+pub async fn diagnose(config: &Config) -> Vec<DiagResult> {
     let mut items: Vec<DiagItem> = Vec::new();
 
     check_config_semantics(config, &mut items);
@@ -85,13 +85,15 @@ pub fn diagnose(config: &Config) -> Vec<DiagResult> {
     check_daemon_state(config, &mut items);
     check_environment(&mut items);
     check_cli_tools(&mut items);
+    check_provider_health(config, &mut items).await;
+    check_fallback_provider_health(config, &mut items).await;
 
     items.into_iter().map(DiagItem::into_result).collect()
 }
 
 /// Run diagnostics and print human-readable report to stdout.
-pub fn run(config: &Config) -> Result<()> {
-    let results = diagnose(config);
+pub async fn run(config: &Config) -> Result<()> {
+    let results = diagnose(config).await;
 
     // Print report
     println!("🩺 AgentZero Doctor (enhanced)");
@@ -612,6 +614,196 @@ fn check_config_semantics(config: &Config, items: &mut Vec<DiagItem>) {
                     agent.provider, reason
                 ),
             ));
+        }
+    }
+}
+
+// ── Live provider health check ────────────────────────────────────
+
+/// Live connectivity health check for the configured default provider.
+///
+/// Builds the provider the same way the daemon does at startup
+/// (`create_routed_provider_with_options` on a blocking task, using the same
+/// `ProviderRuntimeOptions`) and calls its `warmup()` hook — the same
+/// non-fatal connectivity probe (TLS/DNS/HTTP setup) used when channels and
+/// the gateway start up.
+async fn check_provider_health(config: &Config, items: &mut Vec<DiagItem>) {
+    let cat = "providers";
+
+    let provider_name = config
+        .default_provider
+        .clone()
+        .unwrap_or_else(|| "openrouter".to_string());
+    let model = crate::config::resolve_default_model_id(
+        config.default_model.as_deref(),
+        config.default_provider.as_deref(),
+    );
+
+    let provider_runtime_options = crate::providers::ProviderRuntimeOptions {
+        auth_profile_override: None,
+        provider_api_url: config.api_url.clone(),
+        provider_transport: config.effective_provider_transport(),
+        agentzero_dir: config.config_path.parent().map(PathBuf::from),
+        secrets_encrypt: config.secrets.encrypt,
+        reasoning_enabled: config.runtime.reasoning_enabled,
+        reasoning_level: config.effective_provider_reasoning_level(),
+        custom_provider_api_mode: config.provider_api.map(|mode| mode.as_compatible_mode()),
+        custom_provider_auth_header: config.effective_custom_provider_auth_header(),
+        max_tokens_override: None,
+        model_support_vision: config.model_support_vision,
+        litellm_cache: config.effective_litellm_cache(),
+        user_agent: config.effective_provider_user_agent(),
+    };
+
+    let reliability = config.reliability.clone();
+    let model_routes = config.model_routes.clone();
+    let api_key = config.api_key.clone();
+    let api_url = config.api_url.clone();
+    let build_provider_name = provider_name.clone();
+    let build_model = model.clone();
+
+    let build_result = tokio::task::spawn_blocking(move || {
+        crate::providers::create_routed_provider_with_options(
+            &build_provider_name,
+            api_key.as_deref(),
+            api_url.as_deref(),
+            &reliability,
+            &model_routes,
+            &build_model,
+            &provider_runtime_options,
+        )
+    })
+    .await;
+
+    let provider = match build_result {
+        Ok(Ok(provider)) => provider,
+        Ok(Err(err)) => {
+            items.push(DiagItem::error(
+                cat,
+                format!(
+                    "provider \"{provider_name}\" failed to initialize: {}",
+                    truncate_for_display(&format_error_chain(&err), 160)
+                ),
+            ));
+            return;
+        }
+        Err(join_err) => {
+            items.push(DiagItem::error(
+                cat,
+                format!("provider \"{provider_name}\" health check task failed: {join_err}"),
+            ));
+            return;
+        }
+    };
+
+    match provider.warmup().await {
+        Ok(()) => {
+            items.push(DiagItem::ok(
+                cat,
+                format!("provider \"{provider_name}\" health check passed (model: {model})"),
+            ));
+        }
+        Err(err) => {
+            items.push(DiagItem::error(
+                cat,
+                format!(
+                    "provider \"{provider_name}\" health check failed: {}",
+                    truncate_for_display(&format_error_chain(&err), 160)
+                ),
+            ));
+        }
+    }
+}
+
+/// Live connectivity health check for each configured fallback provider
+/// (`reliability.fallback_providers`). Mirrors `check_provider_health`, but
+/// builds and warms up each fallback individually so its pass/fail status is
+/// surfaced as its own diagnostic item rather than being silently absorbed by
+/// the composite provider's `warmup()`.
+async fn check_fallback_provider_health(config: &Config, items: &mut Vec<DiagItem>) {
+    let cat = "providers";
+
+    if config.reliability.fallback_providers.is_empty() {
+        return;
+    }
+
+    let provider_runtime_options = crate::providers::ProviderRuntimeOptions {
+        auth_profile_override: None,
+        provider_api_url: config.api_url.clone(),
+        provider_transport: config.effective_provider_transport(),
+        agentzero_dir: config.config_path.parent().map(PathBuf::from),
+        secrets_encrypt: config.secrets.encrypt,
+        reasoning_enabled: config.runtime.reasoning_enabled,
+        reasoning_level: config.effective_provider_reasoning_level(),
+        custom_provider_api_mode: config.provider_api.map(|mode| mode.as_compatible_mode()),
+        custom_provider_auth_header: config.effective_custom_provider_auth_header(),
+        max_tokens_override: None,
+        model_support_vision: config.model_support_vision,
+        litellm_cache: config.effective_litellm_cache(),
+        user_agent: config.effective_provider_user_agent(),
+    };
+
+    let primary_name = config
+        .default_provider
+        .clone()
+        .unwrap_or_else(|| "openrouter".to_string());
+
+    let mut seen: std::collections::HashSet<&str> = std::collections::HashSet::new();
+    seen.insert(primary_name.as_str());
+
+    for fallback in &config.reliability.fallback_providers {
+        if !seen.insert(fallback.as_str()) {
+            continue; // same as primary, or duplicate fallback entry
+        }
+
+        let reliability = config.reliability.clone();
+        let options = provider_runtime_options.clone();
+        let fallback_entry = fallback.clone();
+
+        let build_result = tokio::task::spawn_blocking(move || {
+            crate::providers::build_fallback_provider(&fallback_entry, &reliability, &options)
+        })
+        .await;
+
+        let provider = match build_result {
+            Ok(Ok(provider)) => provider,
+            Ok(Err(err)) => {
+                items.push(DiagItem::error(
+                    cat,
+                    format!(
+                        "fallback provider \"{fallback}\" failed to initialize: {}",
+                        truncate_for_display(&format_error_chain(&err), 160)
+                    ),
+                ));
+                continue;
+            }
+            Err(join_err) => {
+                items.push(DiagItem::error(
+                    cat,
+                    format!(
+                        "fallback provider \"{fallback}\" health check task failed: {join_err}"
+                    ),
+                ));
+                continue;
+            }
+        };
+
+        match provider.warmup().await {
+            Ok(()) => {
+                items.push(DiagItem::ok(
+                    cat,
+                    format!("fallback provider \"{fallback}\" health check passed"),
+                ));
+            }
+            Err(err) => {
+                items.push(DiagItem::error(
+                    cat,
+                    format!(
+                        "fallback provider \"{fallback}\" health check failed: {}",
+                        truncate_for_display(&format_error_chain(&err), 160)
+                    ),
+                ));
+            }
         }
     }
 }
@@ -1258,6 +1450,33 @@ mod tests {
             .find(|i| i.message.contains("fallback provider"));
         assert!(fb_item.is_some());
         assert_eq!(fb_item.unwrap().severity, Severity::Warn);
+    }
+
+    #[tokio::test]
+    async fn fallback_provider_health_check_reports_invalid_fallback() {
+        let mut config = Config::default();
+        config.default_provider = Some("openrouter".into());
+        config.reliability.fallback_providers = vec!["totally-fake".into()];
+        let mut items = Vec::new();
+        check_fallback_provider_health(&config, &mut items).await;
+
+        let fb_item = items
+            .iter()
+            .find(|i| i.message.contains("fallback provider \"totally-fake\""));
+        assert!(fb_item.is_some());
+        assert_eq!(fb_item.unwrap().severity, Severity::Error);
+        assert!(fb_item.unwrap().message.contains("failed to initialize"));
+    }
+
+    #[tokio::test]
+    async fn fallback_provider_health_check_skips_entry_matching_primary() {
+        let mut config = Config::default();
+        config.default_provider = Some("openrouter".into());
+        config.reliability.fallback_providers = vec!["openrouter".into()];
+        let mut items = Vec::new();
+        check_fallback_provider_health(&config, &mut items).await;
+
+        assert!(items.is_empty());
     }
 
     #[test]

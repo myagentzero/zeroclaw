@@ -162,8 +162,7 @@ impl CoordinationEnvelope {
                     .correlation_id
                     .as_deref()
                     .map(str::trim)
-                    .filter(|value| !value.is_empty())
-                    .is_none()
+                    .is_none_or(str::is_empty)
                 {
                     return Err(CoordinationError::MissingCorrelationId {
                         message_id: self.id.clone(),

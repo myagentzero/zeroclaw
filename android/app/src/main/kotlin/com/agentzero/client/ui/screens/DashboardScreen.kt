@@ -1,9 +1,7 @@
 package com.agentzero.client.ui.screens
 
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -13,7 +11,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.EventNote
@@ -97,7 +94,6 @@ private fun DashboardContent(status: StatusResponse, cost: CostSummary, upcoming
     val maxCost = maxOf(cost.hourlyCostUsd, cost.dailyCostUsd, cost.monthlyCostUsd, 0.001)
     var costOpen by remember { mutableStateOf(true) }
     var tokensOpen by remember { mutableStateOf(true) }
-    var healthOpen by remember { mutableStateOf(true) }
 
     Column(
         modifier = Modifier
@@ -119,10 +115,8 @@ private fun DashboardContent(status: StatusResponse, cost: CostSummary, upcoming
             )
         }
 
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
-            MetricCard(Icons.Default.Bolt, "Provider", status.provider ?: "Unknown", Modifier.weight(1f))
-            MetricCard(Icons.Default.Memory, "Model", status.model, Modifier.weight(1f))
-        }
+        MetricCard(Icons.Default.Bolt, "Provider", status.provider ?: "Unknown", Modifier.fillMaxWidth())
+        MetricCard(Icons.Default.Memory, "Model", status.model, Modifier.fillMaxWidth())
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
             MetricCard(Icons.Default.Schedule, "Uptime", formatUptime(status.uptimeSeconds), Modifier.weight(1f))
             MetricCard(Icons.AutoMirrored.Filled.EventNote, "Scheduled Jobs", "$upcomingJobs", Modifier.weight(1f))
@@ -167,48 +161,6 @@ private fun DashboardContent(status: StatusResponse, cost: CostSummary, upcoming
             LabeledStat("Total Tokens", "${cost.totalTokens}")
             LabeledStat("Avg Tokens / Request", "$avg")
             LabeledStat("Cost per 1K Tokens", formatUsd(costPer1k))
-        }
-
-        CollapsibleCard("Component Health", healthOpen, { healthOpen = !healthOpen }) {
-            if (status.health.components.isEmpty()) {
-                Text(
-                    "No component health is currently available.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            } else {
-                status.health.components.forEach { (name, component) ->
-                    val healthy = component.status.equals("healthy", ignoreCase = true) ||
-                        component.status.equals("ok", ignoreCase = true)
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .size(8.dp)
-                                .background(
-                                    if (healthy) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.error,
-                                    CircleShape,
-                                ),
-                        )
-                        Column(Modifier.padding(start = Spacing.sm).weight(1f)) {
-                            Text(
-                                name.replaceFirstChar {
-                                    if (it.isLowerCase()) it.titlecase(Locale.getDefault()) else it.toString()
-                                },
-                                fontWeight = FontWeight.Medium,
-                                style = MaterialTheme.typography.bodyMedium,
-                            )
-                            Text(
-                                component.status + if (component.restartCount > 0) " · Restarts: ${component.restartCount}" else "",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                    }
-                }
-            }
         }
     }
 }

@@ -798,11 +798,7 @@ pub fn scrub_secret_patterns(input: &str) -> String {
 
     for (prefix, min_len) in PREFIXES {
         let mut search_from = 0;
-        loop {
-            let Some(rel) = scrubbed[search_from..].find(prefix) else {
-                break;
-            };
-
+        while let Some(rel) = scrubbed[search_from..].find(prefix) {
             let start = search_from + rel;
             let content_start = start + prefix.len();
             let end = token_end(&scrubbed, content_start);
@@ -1592,6 +1588,46 @@ pub fn create_resilient_provider(
     )
 }
 
+/// Resolve credentials/options and construct a single fallback provider entry.
+///
+/// Shared by `create_resilient_provider_with_options` (building the resilient
+/// fallback chain) and `doctor`'s per-fallback health checks, so both use
+/// identical credential/profile resolution for a given `fallback_providers` entry.
+pub fn build_fallback_provider(
+    fallback: &str,
+    reliability: &crate::config::ReliabilityConfig,
+    options: &ProviderRuntimeOptions,
+) -> anyhow::Result<Box<dyn Provider>> {
+    let (provider_name, profile_override) = parse_provider_profile(fallback);
+
+    // Fallback providers can use explicit per-entry API keys from
+    // `reliability.fallback_api_keys` (keyed by full fallback entry), or
+    // fall back to provider-name keys for compatibility.
+    //
+    // If no explicit map entry exists, pass `None` so
+    // `resolve_provider_credential` can resolve provider-specific env vars.
+    //
+    // When a profile override is present (e.g. "openai-codex:second"),
+    // propagate it through `auth_profile_override` so the provider
+    // picks up the correct OAuth credential set.
+    let fallback_api_key = reliability
+        .fallback_api_keys
+        .get(fallback)
+        .or_else(|| reliability.fallback_api_keys.get(provider_name))
+        .map(String::as_str);
+
+    let fallback_options = match profile_override {
+        Some(profile) => {
+            let mut opts = options.clone();
+            opts.auth_profile_override = Some(profile.to_string());
+            opts
+        }
+        None => options.clone(),
+    };
+
+    create_provider_with_options(provider_name, fallback_api_key, &fallback_options)
+}
+
 /// Create provider chain with retry/fallback behavior and auth runtime options.
 pub fn create_resilient_provider_with_options(
     primary_name: &str,
@@ -1615,38 +1651,11 @@ pub fn create_resilient_provider_with_options(
             continue;
         }
 
-        let (provider_name, profile_override) = parse_provider_profile(fallback);
-
-        // Fallback providers can use explicit per-entry API keys from
-        // `reliability.fallback_api_keys` (keyed by full fallback entry), or
-        // fall back to provider-name keys for compatibility.
-        //
-        // If no explicit map entry exists, pass `None` so
-        // `resolve_provider_credential` can resolve provider-specific env vars.
-        //
-        // When a profile override is present (e.g. "openai-codex:second"),
-        // propagate it through `auth_profile_override` so the provider
-        // picks up the correct OAuth credential set.
-        let fallback_api_key = reliability
-            .fallback_api_keys
-            .get(fallback)
-            .or_else(|| reliability.fallback_api_keys.get(provider_name))
-            .map(String::as_str);
-
-        let fallback_options = match profile_override {
-            Some(profile) => {
-                let mut opts = options.clone();
-                opts.auth_profile_override = Some(profile.to_string());
-                opts
-            }
-            None => options.clone(),
-        };
-
-        match create_provider_with_options(provider_name, fallback_api_key, &fallback_options) {
+        match build_fallback_provider(fallback, reliability, options) {
             Ok(provider) => providers.push((fallback.clone(), provider)),
             Err(_error) => {
                 tracing::warn!(
-                    fallback_provider = provider_name,
+                    fallback_provider = fallback.as_str(),
                     "Ignoring invalid fallback provider during initialization"
                 );
             }
@@ -1658,8 +1667,8 @@ pub fn create_resilient_provider_with_options(
         reliability.provider_retries,
         reliability.provider_backoff_ms,
     )
-    .with_api_keys(reliability.api_keys.clone())
     .with_model_fallbacks(reliability.model_fallbacks.clone())
+    .with_provider_model_overrides(reliability.provider_model_overrides.clone())
     .with_vision_override(options.model_support_vision);
 
     Ok(Box::new(reliable))
@@ -3042,8 +3051,8 @@ mod tests {
                 "openai".into(),
             ],
             fallback_api_keys: std::collections::HashMap::new(),
-            api_keys: Vec::new(),
             model_fallbacks: std::collections::HashMap::new(),
+            provider_model_overrides: std::collections::HashMap::new(),
             channel_initial_backoff_secs: 2,
             channel_max_backoff_secs: 60,
             scheduler_poll_secs: 15,
@@ -3082,8 +3091,8 @@ mod tests {
             provider_backoff_ms: 100,
             fallback_providers: vec!["lmstudio".into(), "ollama".into()],
             fallback_api_keys: std::collections::HashMap::new(),
-            api_keys: Vec::new(),
             model_fallbacks: std::collections::HashMap::new(),
+            provider_model_overrides: std::collections::HashMap::new(),
             channel_initial_backoff_secs: 2,
             channel_max_backoff_secs: 60,
             scheduler_poll_secs: 15,
@@ -3105,8 +3114,8 @@ mod tests {
             provider_backoff_ms: 100,
             fallback_providers: vec!["custom:http://host.docker.internal:1234/v1".into()],
             fallback_api_keys: std::collections::HashMap::new(),
-            api_keys: Vec::new(),
             model_fallbacks: std::collections::HashMap::new(),
+            provider_model_overrides: std::collections::HashMap::new(),
             channel_initial_backoff_secs: 2,
             channel_max_backoff_secs: 60,
             scheduler_poll_secs: 15,
@@ -3132,8 +3141,8 @@ mod tests {
                 "lmstudio".into(),
             ],
             fallback_api_keys: std::collections::HashMap::new(),
-            api_keys: Vec::new(),
             model_fallbacks: std::collections::HashMap::new(),
+            provider_model_overrides: std::collections::HashMap::new(),
             channel_initial_backoff_secs: 2,
             channel_max_backoff_secs: 60,
             scheduler_poll_secs: 15,
@@ -3165,8 +3174,8 @@ mod tests {
             provider_backoff_ms: 100,
             fallback_providers: vec!["osaurus".into(), "lmstudio".into()],
             fallback_api_keys: std::collections::HashMap::new(),
-            api_keys: Vec::new(),
             model_fallbacks: std::collections::HashMap::new(),
+            provider_model_overrides: std::collections::HashMap::new(),
             channel_initial_backoff_secs: 2,
             channel_max_backoff_secs: 60,
             scheduler_poll_secs: 15,
@@ -3708,8 +3717,8 @@ mod tests {
             provider_backoff_ms: 100,
             fallback_providers: vec!["openai-codex:second".into()],
             fallback_api_keys: std::collections::HashMap::new(),
-            api_keys: Vec::new(),
             model_fallbacks: std::collections::HashMap::new(),
+            provider_model_overrides: std::collections::HashMap::new(),
             channel_initial_backoff_secs: 2,
             channel_max_backoff_secs: 60,
             scheduler_poll_secs: 15,
@@ -3738,8 +3747,8 @@ mod tests {
                 "nonexistent-provider".into(),
             ],
             fallback_api_keys: std::collections::HashMap::new(),
-            api_keys: Vec::new(),
             model_fallbacks: std::collections::HashMap::new(),
+            provider_model_overrides: std::collections::HashMap::new(),
             channel_initial_backoff_secs: 2,
             channel_max_backoff_secs: 60,
             scheduler_poll_secs: 15,

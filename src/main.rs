@@ -1304,7 +1304,7 @@ async fn main() -> Result<()> {
                 contains.as_deref(),
                 limit,
             ),
-            None => doctor::run(&config),
+            None => doctor::run(&config).await,
         },
 
         Commands::Channel { channel_command } => match channel_command {
@@ -1437,7 +1437,6 @@ async fn main() -> Result<()> {
 /// Keys whose values are masked in `config show` / `config get` output.
 const REDACTED_CONFIG_KEYS: &[&str] = &[
     "api_key",
-    "api_keys",
     "bot_token",
     "paired_tokens",
     "db_url",

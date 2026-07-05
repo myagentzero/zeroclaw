@@ -1227,6 +1227,11 @@ pub async fn run_tool_call_loop(
         .flatten();
     let mut progress_tracker = ProgressTracker::default();
     let mut active_model = model.to_string();
+    // Cost budget state can remain in the same Warning/Exceeded band across many
+    // loop iterations within a single request; only log/trace each once per turn
+    // instead of on every iteration.
+    let mut cost_budget_warning_logged = false;
+    let mut cost_budget_exceeded_warn_logged = false;
     let canary_guard = CanaryGuard::new(
         TOOL_LOOP_CANARY_TOKENS_ENABLED
             .try_with(|enabled| *enabled)
@@ -1406,53 +1411,24 @@ pub async fn run_tool_call_loop(
                         limit_usd,
                         period,
                     } => {
-                        tracing::warn!(
-                            model = active_model.as_str(),
-                            period = usage_period_label(period),
-                            current_usd,
-                            limit_usd,
-                            estimated_cost_usd,
-                            "Cost budget warning threshold reached"
-                        );
-                        runtime_trace::record_event(
-                            "cost_budget_warning",
-                            Some(channel_name),
-                            Some(provider_name),
-                            Some(active_model.as_str()),
-                            Some(&turn_id),
-                            Some(true),
-                            Some("budget warning threshold reached"),
-                            serde_json::json!({
-                                "iteration": iteration + 1,
-                                "period": usage_period_label(period),
-                                "current_usd": current_usd,
-                                "limit_usd": limit_usd,
-                                "estimated_cost_usd": estimated_cost_usd,
-                            }),
-                        );
-                    }
-                    BudgetCheck::Exceeded {
-                        current_usd,
-                        limit_usd,
-                        period,
-                    } => match cost_ctx.mode {
-                        CostEnforcementMode::Warn => {
+                        if !cost_budget_warning_logged {
+                            cost_budget_warning_logged = true;
                             tracing::warn!(
                                 model = active_model.as_str(),
                                 period = usage_period_label(period),
                                 current_usd,
                                 limit_usd,
                                 estimated_cost_usd,
-                                "Cost budget exceeded (warn mode): continuing request"
+                                "Cost budget warning threshold reached"
                             );
                             runtime_trace::record_event(
-                                "cost_budget_exceeded_warn_mode",
+                                "cost_budget_warning",
                                 Some(channel_name),
                                 Some(provider_name),
                                 Some(active_model.as_str()),
                                 Some(&turn_id),
                                 Some(true),
-                                Some("budget exceeded but proceeding due to warn mode"),
+                                Some("budget warning threshold reached"),
                                 serde_json::json!({
                                     "iteration": iteration + 1,
                                     "period": usage_period_label(period),
@@ -1461,6 +1437,41 @@ pub async fn run_tool_call_loop(
                                     "estimated_cost_usd": estimated_cost_usd,
                                 }),
                             );
+                        }
+                    }
+                    BudgetCheck::Exceeded {
+                        current_usd,
+                        limit_usd,
+                        period,
+                    } => match cost_ctx.mode {
+                        CostEnforcementMode::Warn => {
+                            if !cost_budget_exceeded_warn_logged {
+                                cost_budget_exceeded_warn_logged = true;
+                                tracing::warn!(
+                                    model = active_model.as_str(),
+                                    period = usage_period_label(period),
+                                    current_usd,
+                                    limit_usd,
+                                    estimated_cost_usd,
+                                    "Cost budget exceeded (warn mode): continuing request"
+                                );
+                                runtime_trace::record_event(
+                                    "cost_budget_exceeded_warn_mode",
+                                    Some(channel_name),
+                                    Some(provider_name),
+                                    Some(active_model.as_str()),
+                                    Some(&turn_id),
+                                    Some(true),
+                                    Some("budget exceeded but proceeding due to warn mode"),
+                                    serde_json::json!({
+                                        "iteration": iteration + 1,
+                                        "period": usage_period_label(period),
+                                        "current_usd": current_usd,
+                                        "limit_usd": limit_usd,
+                                        "estimated_cost_usd": estimated_cost_usd,
+                                    }),
+                                );
+                            }
                         }
                         CostEnforcementMode::RouteDown | CostEnforcementMode::Block => {
                             let message = budget_exceeded_message(
@@ -2397,7 +2408,7 @@ pub async fn run_tool_call_loop(
         for (((idx, call), mut outcome), progress_idx) in executable_indices
             .iter()
             .zip(executable_calls.iter())
-            .zip(executed_outcomes.into_iter())
+            .zip(executed_outcomes)
             .zip(progress_indices.iter())
         {
             runtime_trace::record_event(
@@ -3226,6 +3237,7 @@ struct CliOverrides<'a> {
     research_verbose: bool,
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn process_message_core(
     config: &Config,
     message: &str,
@@ -3358,7 +3370,7 @@ async fn process_message_core(
                                 &effective_model,
                                 temperature,
                                 false,
-                                cli_overrides.approval_manager.as_ref().map(|arc| &**arc),
+                                cli_overrides.approval_manager.as_deref(),
                                 cli_overrides.channel_name,
                                 &config.multimodal,
                                 config.agent.max_tool_iterations,

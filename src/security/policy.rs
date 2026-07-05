@@ -619,12 +619,10 @@ fn contains_unquoted_single_ampersand(command: &str) -> bool {
                 match ch {
                     '\'' => quote = QuoteState::Single,
                     '"' => quote = QuoteState::Double,
-                    '&' => {
-                        // `&&` is an allowed separator, not a background op.
-                        // `>&` (as in `2>&1`) is fd redirection, not background.
-                        if chars.next_if_eq(&'&').is_none() && prev != '>' {
-                            return true;
-                        }
+                    // `&&` is an allowed separator, not a background op.
+                    // `>&` (as in `2>&1`) is fd redirection, not background.
+                    '&' if chars.next_if_eq(&'&').is_none() && prev != '>' => {
+                        return true;
                     }
                     _ => {}
                 }
@@ -675,6 +673,99 @@ fn contains_unquoted_char(command: &str, target: char) -> bool {
                     '"' => quote = QuoteState::Double,
                     _ if ch == target => return true,
                     _ => {}
+                }
+            }
+        }
+    }
+
+    false
+}
+
+/// Detect unquoted file redirection (`>`, `>>`, `2>`, `<file`, etc.), while
+/// treating heredoc operators (`<<DELIM`, `<<-DELIM`) as benign.
+///
+/// Heredocs supply inline stdin data to an already-allowlisted command and
+/// don't read from or write to arbitrary filesystem paths, unlike real
+/// redirection, so they're exempt from the high-risk redirection block.
+fn contains_unquoted_redirection(command: &str) -> bool {
+    let chars: Vec<char> = command.chars().collect();
+    let mut quote = QuoteState::None;
+    let mut escaped = false;
+    let mut i = 0;
+
+    while i < chars.len() {
+        let ch = chars[i];
+        match quote {
+            QuoteState::Single => {
+                if ch == '\'' {
+                    quote = QuoteState::None;
+                }
+                i += 1;
+            }
+            QuoteState::Double => {
+                if escaped {
+                    escaped = false;
+                    i += 1;
+                    continue;
+                }
+                if ch == '\\' {
+                    escaped = true;
+                    i += 1;
+                    continue;
+                }
+                if ch == '"' {
+                    quote = QuoteState::None;
+                }
+                i += 1;
+            }
+            QuoteState::None => {
+                if escaped {
+                    escaped = false;
+                    i += 1;
+                    continue;
+                }
+                if ch == '\\' {
+                    escaped = true;
+                    i += 1;
+                    continue;
+                }
+                match ch {
+                    '\'' => {
+                        quote = QuoteState::Single;
+                        i += 1;
+                    }
+                    '"' => {
+                        quote = QuoteState::Double;
+                        i += 1;
+                    }
+                    '>' => return true,
+                    '<' if chars.get(i + 1) == Some(&'<') => {
+                        // Heredoc operator: skip `<<`, optional `-`, whitespace,
+                        // and the delimiter word (quoted or bare), mirroring
+                        // `extract_heredoc_delimiter`'s parsing.
+                        i += 2;
+                        if chars.get(i) == Some(&'-') {
+                            i += 1;
+                        }
+                        while chars.get(i).is_some_and(|c| *c == ' ' || *c == '\t') {
+                            i += 1;
+                        }
+                        if let Some(&q) = chars.get(i).filter(|c| **c == '\'' || **c == '"') {
+                            i += 1;
+                            while chars.get(i).is_some_and(|c| *c != q) {
+                                i += 1;
+                            }
+                            i += 1; // consume closing quote (or reach end of input)
+                        } else {
+                            while chars.get(i).is_some_and(|c| !c.is_whitespace()) {
+                                i += 1;
+                            }
+                        }
+                    }
+                    '<' => return true,
+                    _ => {
+                        i += 1;
+                    }
                 }
             }
         }
@@ -1106,9 +1197,7 @@ impl SecurityPolicy {
             return Err("command contains disallowed shell expansion syntax".into());
         }
 
-        if self.block_high_risk_commands
-            && (contains_unquoted_char(command, '>') || contains_unquoted_char(command, '<'))
-        {
+        if self.block_high_risk_commands && contains_unquoted_redirection(command) {
             return Err("command contains disallowed redirection syntax".into());
         }
 
@@ -3489,8 +3578,8 @@ mod tests {
     fn heredoc_python_script_allowed_when_python3_in_allowlist() {
         let mut p = default_policy();
         p.allowed_commands.push("python3".into());
-        p.block_high_risk_commands = false;
 
+        // block_high_risk_commands defaults to true; heredocs must still work.
         let cmd =
             "python3 << 'PYEOF'\nimport feedparser, json\nfrom datetime import datetime\nPYEOF";
         assert!(
@@ -3503,7 +3592,6 @@ mod tests {
     fn heredoc_body_with_dollar_signs_not_blocked() {
         let mut p = default_policy();
         p.allowed_commands.push("python3".into());
-        p.block_high_risk_commands = false;
 
         // Quoted heredoc delimiter means shell won't expand $vars,
         // so security checks should not flag them either.
@@ -3511,6 +3599,43 @@ mod tests {
         assert!(
             p.is_command_allowed(cmd),
             "$ inside quoted heredoc body should not trigger variable expansion check"
+        );
+    }
+
+    #[test]
+    fn heredoc_dash_form_with_quoted_delimiter_allowed_by_default() {
+        let mut p = default_policy();
+        p.allowed_commands.push("python3".into());
+
+        // Regression test for the exact shape reported in production logs:
+        // `python3 - <<'PY' ... PY` was rejected as "disallowed redirection
+        // syntax" even though block_high_risk_commands is the default (true).
+        let cmd = "python3 - <<'PY'\ncq=[1,2,3]\nprint(sum(cq))\nPY";
+        assert!(
+            p.is_command_allowed(cmd),
+            "quoted heredoc delimiter with no space before it should be allowed by default"
+        );
+    }
+
+    #[test]
+    fn real_redirection_still_blocked_by_default_with_heredoc_present() {
+        let p = default_policy();
+
+        assert!(
+            !p.is_command_allowed("cat << 'EOF' > /etc/passwd\nbody\nEOF"),
+            "output redirection on the heredoc line must still be blocked"
+        );
+        assert!(
+            !p.is_command_allowed("echo hi > out.txt"),
+            "plain output redirection must still be blocked by default"
+        );
+        assert!(
+            !p.is_command_allowed("cat < /etc/shadow"),
+            "plain input redirection must still be blocked by default"
+        );
+        assert!(
+            !p.is_command_allowed("echo hi >> out.txt"),
+            "append redirection must still be blocked by default"
         );
     }
 

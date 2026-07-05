@@ -1461,9 +1461,8 @@ async fn describe_non_cli_approvals(
                 .unwrap_or("n/a");
             let _ = writeln!(
                 response,
-                "  - {}: {}={}, expires_at={}, reason={}",
+                "  - {}: tool={}, expires_at={}, reason={}",
                 req.request_id,
-                "tool",
                 approval_target_label(&req.tool_name),
                 req.expires_at,
                 reason
@@ -2775,9 +2774,10 @@ async fn handle_runtime_command_if_needed(
                         let _ = tokio::fs::remove_file(&meta_path).await;
                         format!("Pairing reset. New code: `{code}`. All previous tokens revoked.")
                     }
-                    Ok(None) => format!(
+                    Ok(None) => {
                         "Pairing reset in memory, but runtime config path was not available."
-                    ),
+                            .to_string()
+                    }
                     Err(err) => {
                         format!("Pairing reset in memory, but failed to persist: {err}")
                     }

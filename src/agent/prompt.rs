@@ -26,19 +26,21 @@ pub fn refresh_prompt_datetime(prompt: &mut String, timezone_override: Option<&s
 
 /// Format the current datetime using the configured timezone override,
 /// falling back to the system local timezone.
+///
+/// Uses a Unix timestamp (a handful of tokens for any LLM tokenizer, and
+/// widely understood from training data) plus the day of week, since models
+/// otherwise have to parse a much longer human-readable string to derive
+/// the same information.
 pub(crate) fn format_datetime(timezone_override: Option<&str>) -> String {
+    let timestamp = Utc::now().timestamp();
     if let Some(tz_name) = timezone_override {
         if let Ok(tz) = tz_name.parse::<chrono_tz::Tz>() {
             let now = Utc::now().with_timezone(&tz);
-            return format!("{} ({})", now.format("%A, %Y-%m-%d %H:%M:%S"), tz_name);
+            return format!("{timestamp} {} ({tz_name})", now.format("%A"));
         }
     }
     let now = Local::now();
-    format!(
-        "{} ({})",
-        now.format("%A, %Y-%m-%d %H:%M:%S"),
-        now.format("%Z")
-    )
+    format!("{timestamp} {} ({})", now.format("%A"), now.format("%Z"))
 }
 
 fn shift_bootstrap_heading_line(line: &str) -> String {
@@ -104,7 +106,7 @@ pub(crate) fn inject_workspace_file(
                     "\n[... truncated at {max_chars} chars — use `file_read` tool for full file]\n"
                 );
             }
-            prompt.push_str("\n");
+            prompt.push('\n');
         }
         Err(_) => {
             let _ = writeln!(prompt, "### {filename}\n\n[File not found: {filename}]\n");
@@ -484,8 +486,9 @@ mod tests {
     #[test]
     fn format_datetime_returns_timestamp_with_timezone() {
         let result = format_datetime(None);
-        assert!(result.chars().any(|c| c.is_ascii_digit()));
-        assert!(result.contains(" ("));
+        let (timestamp, rest) = result.split_once(' ').expect("timestamp and rest");
+        assert!(timestamp.chars().all(|c| c.is_ascii_digit()));
+        assert!(rest.contains(" ("));
         assert!(result.ends_with(')'));
     }
 

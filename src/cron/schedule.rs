@@ -26,8 +26,11 @@ pub fn parse_at_timestamp_lenient(raw: &str) -> Result<DateTime<Utc>> {
     for fmt in NAIVE_AT_FORMATS {
         if let Ok(naive) = NaiveDateTime::parse_from_str(trimmed, fmt) {
             // When no timezone is specified, interpret as local time and convert to UTC
-            return Ok(Local.from_local_datetime(&naive).single()
-                .context("Local time is ambiguous or invalid")?.with_timezone(&Utc));
+            return Ok(Local
+                .from_local_datetime(&naive)
+                .single()
+                .context("Local time is ambiguous or invalid")?
+                .with_timezone(&Utc));
         }
     }
 
@@ -228,12 +231,7 @@ mod tests {
         .unwrap();
         let expected_local = Local.with_ymd_and_hms(2026, 6, 29, 9, 0, 0).unwrap();
         let expected_utc = expected_local.with_timezone(&Utc);
-        assert_eq!(
-            schedule,
-            Schedule::At {
-                at: expected_utc
-            }
-        );
+        assert_eq!(schedule, Schedule::At { at: expected_utc });
     }
 
     #[test]

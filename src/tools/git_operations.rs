@@ -68,10 +68,7 @@ impl GitOperationsTool {
     /// Check if an operation is read-only
     fn is_read_only(&self, operation: &str) -> bool {
         // branch is omitted: it can both list (read) and create (write) depending on args
-        matches!(
-            operation,
-            "status" | "diff" | "log" | "show" | "rev-parse"
-        )
+        matches!(operation, "status" | "diff" | "log" | "show" | "rev-parse")
     }
 
     /// Resolve a user-provided path to an absolute path within the workspace.
@@ -742,9 +739,10 @@ impl GitOperationsTool {
 
         // Build the target path and reject any traversal or absolute components.
         let target = self.workspace_dir.join(path);
-        if target.components().any(|c| {
-            c == std::path::Component::ParentDir || c == std::path::Component::RootDir
-        }) {
+        if target
+            .components()
+            .any(|c| c == std::path::Component::ParentDir || c == std::path::Component::RootDir)
+        {
             return Ok(ToolResult {
                 success: false,
                 output: String::new(),
