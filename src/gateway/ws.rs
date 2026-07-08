@@ -692,7 +692,7 @@ mod tests {
     #[test]
     fn refresh_ws_history_system_prompt_datetime_updates_only_system_entry() {
         let mut history = vec![
-            ChatMessage::system("## Current Date & Time\n\n2000-01-01 00:00:00 (UTC)\n"),
+            ChatMessage::system("Today's date is 2000-01-01 00:00:00 (UTC)\n"),
             ChatMessage::user("hello"),
         ];
         refresh_ws_history_system_prompt_datetime(&mut history, None);

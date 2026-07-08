@@ -4,9 +4,9 @@ use std::path::Path;
 
 pub(crate) const BOOTSTRAP_MAX_CHARS: usize = 20_000;
 const COMPACT_BOOTSTRAP_MAX_CHARS: usize = 200;
-const DATETIME_HEADER: &str = "## Current Date & Time\n\n";
+const DATETIME_HEADER: &str = "Today's date is";
 
-/// Refresh the `## Current Date & Time` section in an existing system prompt.
+/// Refresh the "Today's date is" line in an existing system prompt.
 /// Long-lived sessions keep a stable system prompt; this updates only the
 /// timestamp payload so per-turn "current time" answers stay accurate.
 pub fn refresh_prompt_datetime(prompt: &mut String, timezone_override: Option<&str>) {
@@ -14,7 +14,7 @@ pub fn refresh_prompt_datetime(prompt: &mut String, timezone_override: Option<&s
         return;
     };
 
-    let content_start = section_start + DATETIME_HEADER.len();
+    let content_start = section_start + DATETIME_HEADER.len() + " ".len();
     let content_end = prompt[content_start..]
         .find('\n')
         .map(|offset| content_start + offset)
@@ -26,21 +26,19 @@ pub fn refresh_prompt_datetime(prompt: &mut String, timezone_override: Option<&s
 
 /// Format the current datetime using the configured timezone override,
 /// falling back to the system local timezone.
-///
-/// Uses a Unix timestamp (a handful of tokens for any LLM tokenizer, and
-/// widely understood from training data) plus the day of week, since models
-/// otherwise have to parse a much longer human-readable string to derive
-/// the same information.
 pub(crate) fn format_datetime(timezone_override: Option<&str>) -> String {
-    let timestamp = Utc::now().timestamp();
     if let Some(tz_name) = timezone_override {
         if let Ok(tz) = tz_name.parse::<chrono_tz::Tz>() {
             let now = Utc::now().with_timezone(&tz);
-            return format!("{timestamp} {} ({tz_name})", now.format("%A"));
+            return format!("{} ({})", now.format("%A, %Y-%m-%d %H:%M:%S"), tz_name);
         }
     }
     let now = Local::now();
-    format!("{timestamp} {} ({})", now.format("%A"), now.format("%Z"))
+    format!(
+        "{} ({})",
+        now.format("%A, %Y-%m-%d %H:%M:%S"),
+        now.format("%Z")
+    )
 }
 
 fn shift_bootstrap_heading_line(line: &str) -> String {
@@ -462,7 +460,7 @@ pub fn build_system_prompt_with_mode(
 
     // ── 9. Date & Time ─────────────────────────────────────────
     let datetime_str = format_datetime(config.local_context.timezone.as_deref());
-    let _ = writeln!(prompt, "{DATETIME_HEADER}{datetime_str}\n");
+    let _ = writeln!(prompt, "{DATETIME_HEADER} {datetime_str}\n");
 
     let word_count = prompt.split_whitespace().count();
     tracing::info!(
@@ -486,9 +484,7 @@ mod tests {
     #[test]
     fn format_datetime_returns_timestamp_with_timezone() {
         let result = format_datetime(None);
-        let (timestamp, rest) = result.split_once(' ').expect("timestamp and rest");
-        assert!(timestamp.chars().all(|c| c.is_ascii_digit()));
-        assert!(rest.contains(" ("));
+        assert!(result.contains(" ("));
         assert!(result.ends_with(')'));
     }
 
@@ -506,10 +502,12 @@ mod tests {
 
     #[test]
     fn refresh_prompt_datetime_updates_timestamp_in_place() {
-        let mut prompt = "## Runtime\n\nHost: test\n\n## Current Date & Time\n\n2000-01-01 00:00:00 (UTC)\n\n## Next Section".to_string();
+        let mut prompt =
+            "## Runtime\n\nHost: test\n\nToday's date is 2000-01-01 00:00:00 (UTC)\n\n## Next Section"
+                .to_string();
         refresh_prompt_datetime(&mut prompt, None);
 
-        assert!(prompt.contains("## Current Date & Time\n\n"));
+        assert!(prompt.contains("Today's date is "));
         assert!(prompt.contains("\n\n## Next Section"));
         assert!(!prompt.contains("2000-01-01 00:00:00 (UTC)"));
     }

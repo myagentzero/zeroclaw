@@ -76,7 +76,8 @@ The `src/cron/consolidation.rs` module provides **nightly memory consolidation**
 - **Line 153-217**: `run_agent_job()` - executes the consolidation prompt as an agent task
   - Checks security policy (autonomy level, rate limits)
   - Records action in security budget
-  - Prefixes prompt with `[cron:{job_id} {name}]`
+  - Prefixes prompt with `[cron:{job_id} {name}]` plus a scheduled-job instruction telling
+    the model to output its results directly in the final response text
   - Supports `light_context` mode for compact runs
   - Invokes `crate::agent::run()` with the prompt
 

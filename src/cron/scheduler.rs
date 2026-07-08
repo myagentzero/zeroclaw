@@ -188,9 +188,12 @@ async fn run_agent_job(
             "blocked by security policy: action budget exhausted".to_string(),
         );
     }
-    let name = job.name.clone().unwrap_or_else(|| "cron-job".to_string());
     let prompt = job.prompt.clone().unwrap_or_default();
-    let prefixed_prompt = format!("[cron:{} {name}] {prompt}", job.id);
+    let prefixed_prompt = format!(
+        "You are executing from a scheduled job (id:{}). Read the following prompt and \
+         output your results directly in the final response text.\n\n{prompt}",
+        job.id
+    );
     let model_override = job.model.clone();
 
     let run_config = build_agent_run_config(config, job);
