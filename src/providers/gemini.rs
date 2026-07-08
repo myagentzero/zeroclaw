@@ -158,7 +158,10 @@ struct InlineDataPart {
 
 #[derive(Debug, Serialize, Clone)]
 struct GenerationConfig {
-    temperature: f64,
+    /// Omitted by default; only sent when the upstream explicitly requires it.
+    /// See [`super::is_temperature_required_error`].
+    #[serde(skip_serializing_if = "Option::is_none")]
+    temperature: Option<f64>,
     #[serde(rename = "maxOutputTokens")]
     max_output_tokens: u32,
 }
@@ -1057,11 +1060,11 @@ impl GeminiProvider {
             _ => (None, None),
         };
 
-        let request = GenerateContentRequest {
+        let mut request = GenerateContentRequest {
             contents,
             system_instruction,
             generation_config: GenerationConfig {
-                temperature,
+                temperature: None,
                 max_output_tokens: 8192,
             },
         };
@@ -1085,7 +1088,28 @@ impl GeminiProvider {
             let status = response.status();
             let error_text = response.text().await.unwrap_or_default();
 
-            if auth.is_oauth() && Self::should_rotate_oauth_on_error(status, &error_text) {
+            if super::is_temperature_required_error(status, &error_text)
+                && request.generation_config.temperature.is_none()
+            {
+                tracing::warn!(
+                    provider = "gemini",
+                    model = %model,
+                    "Upstream requires temperature; retrying with configured value"
+                );
+                request.generation_config.temperature = Some(temperature);
+                response = self
+                    .build_generate_content_request(
+                        auth,
+                        &url,
+                        &request,
+                        model,
+                        true,
+                        project.as_deref(),
+                        oauth_token.as_deref(),
+                    )
+                    .send()
+                    .await?;
+            } else if auth.is_oauth() && Self::should_rotate_oauth_on_error(status, &error_text) {
                 // For CLI OAuth: rotate credentials
                 // For ManagedOAuth: AuthService handles refresh, just retry
                 let can_retry = match auth {
@@ -1629,7 +1653,7 @@ mod tests {
             }],
             system_instruction: None,
             generation_config: GenerationConfig {
-                temperature: 0.7,
+                temperature: Some(0.7),
                 max_output_tokens: 8192,
             },
         };
@@ -1670,7 +1694,7 @@ mod tests {
             }],
             system_instruction: None,
             generation_config: GenerationConfig {
-                temperature: 0.7,
+                temperature: Some(0.7),
                 max_output_tokens: 8192,
             },
         };
@@ -1714,7 +1738,7 @@ mod tests {
             }],
             system_instruction: None,
             generation_config: GenerationConfig {
-                temperature: 0.7,
+                temperature: Some(0.7),
                 max_output_tokens: 8192,
             },
         };
@@ -1751,7 +1775,7 @@ mod tests {
                 }],
             }),
             generation_config: GenerationConfig {
-                temperature: 0.7,
+                temperature: Some(0.7),
                 max_output_tokens: 8192,
             },
         };
@@ -1763,6 +1787,30 @@ mod tests {
         assert!(!json.contains("\"system_instruction\""));
         assert!(json.contains("\"temperature\":0.7"));
         assert!(json.contains("\"maxOutputTokens\":8192"));
+    }
+
+    #[test]
+    fn generation_config_omits_temperature_when_none() {
+        let config = GenerationConfig {
+            temperature: None,
+            max_output_tokens: 8192,
+        };
+        let json = serde_json::to_string(&config).unwrap();
+        assert!(
+            !json.contains("temperature"),
+            "temperature should be omitted by default: {json}"
+        );
+        assert!(json.contains("\"maxOutputTokens\":8192"));
+    }
+
+    #[test]
+    fn generation_config_includes_temperature_when_set() {
+        let config = GenerationConfig {
+            temperature: Some(0.9),
+            max_output_tokens: 8192,
+        };
+        let json = serde_json::to_string(&config).unwrap();
+        assert!(json.contains("\"temperature\":0.9"));
     }
 
     #[test]
@@ -1848,7 +1896,7 @@ mod tests {
                 }],
                 system_instruction: None,
                 generation_config: Some(GenerationConfig {
-                    temperature: 0.7,
+                    temperature: Some(0.7),
                     max_output_tokens: 8192,
                 }),
             },

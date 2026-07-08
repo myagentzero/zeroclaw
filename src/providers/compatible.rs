@@ -2219,24 +2219,9 @@ impl OpenAiCompatibleProvider {
         super::is_native_tool_schema_rejection(status, error)
     }
 
-    /// Detects upstream 400 responses indicating the model requires an
-    /// explicit `temperature` value in the request body. AgentZero omits
-    /// `temperature` by default for forward compatibility with models that
-    /// reject custom values (gpt-5, o-series, Claude 4.x on Bedrock). When
-    /// a legacy provider instead demands temperature, this classifier
-    /// triggers a one-shot retry with the caller-configured value.
+    /// See [`super::is_temperature_required_error`] for the detection rules.
     fn is_temperature_required_error(status: reqwest::StatusCode, error: &str) -> bool {
-        if status != reqwest::StatusCode::BAD_REQUEST {
-            return false;
-        }
-        let body = error.to_lowercase();
-        if !body.contains("temperature") {
-            return false;
-        }
-        body.contains("required")
-            || body.contains("must be provided")
-            || body.contains("missing")
-            || body.contains("must be set")
+        super::is_temperature_required_error(status, error)
     }
 
     async fn post_api_chat_with_temperature_retry(

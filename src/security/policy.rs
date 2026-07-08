@@ -681,8 +681,41 @@ fn contains_unquoted_char(command: &str, target: char) -> bool {
     false
 }
 
+/// If the redirection operator (`>`, `>>`, or `<`) starting at `chars[i]`
+/// targets `/dev/null` (e.g. `2>/dev/null`, `>>/dev/null`, `</dev/null`),
+/// returns the index just past `/dev/null`. Returns `None` otherwise.
+///
+/// Redirecting to or from `/dev/null` can't leak or overwrite real files, so
+/// (unlike arbitrary-path redirection) it's exempt from the high-risk
+/// redirection block. This is a common idiom for silencing optional/best-
+/// effort commands, e.g. `source venv/bin/activate 2>/dev/null`.
+fn dev_null_redirect_end(chars: &[char], i: usize) -> Option<usize> {
+    let mut j = i;
+    if chars.get(j) == Some(&'<') {
+        j += 1;
+    } else {
+        while chars.get(j) == Some(&'>') {
+            j += 1;
+        }
+    }
+    while chars.get(j).is_some_and(|c| *c == ' ' || *c == '\t') {
+        j += 1;
+    }
+    let target: String = chars.get(j..j + 9)?.iter().collect();
+    if target != "/dev/null" {
+        return None;
+    }
+    let end = j + 9;
+    matches!(
+        chars.get(end),
+        None | Some(' ' | '\t' | ';' | '&' | '|' | '\n' | ')')
+    )
+    .then_some(end)
+}
+
 /// Detect unquoted file redirection (`>`, `>>`, `2>`, `<file`, etc.), while
-/// treating heredoc operators (`<<DELIM`, `<<-DELIM`) as benign.
+/// treating heredoc operators (`<<DELIM`, `<<-DELIM`) and redirection to/from
+/// `/dev/null` as benign.
 ///
 /// Heredocs supply inline stdin data to an already-allowlisted command and
 /// don't read from or write to arbitrary filesystem paths, unlike real
@@ -738,7 +771,13 @@ fn contains_unquoted_redirection(command: &str) -> bool {
                         quote = QuoteState::Double;
                         i += 1;
                     }
-                    '>' => return true,
+                    '>' => {
+                        if let Some(end) = dev_null_redirect_end(&chars, i) {
+                            i = end;
+                        } else {
+                            return true;
+                        }
+                    }
                     '<' if chars.get(i + 1) == Some(&'<') => {
                         // Heredoc operator: skip `<<`, optional `-`, whitespace,
                         // and the delimiter word (quoted or bare), mirroring
@@ -762,7 +801,13 @@ fn contains_unquoted_redirection(command: &str) -> bool {
                             }
                         }
                     }
-                    '<' => return true,
+                    '<' => {
+                        if let Some(end) = dev_null_redirect_end(&chars, i) {
+                            i = end;
+                        } else {
+                            return true;
+                        }
+                    }
                     _ => {
                         i += 1;
                     }
@@ -3614,6 +3659,35 @@ mod tests {
         assert!(
             p.is_command_allowed(cmd),
             "quoted heredoc delimiter with no space before it should be allowed by default"
+        );
+    }
+
+    #[test]
+    fn dev_null_redirection_allowed_by_default() {
+        let mut p = default_policy();
+        p.allowed_commands.push("python3".into());
+        p.allowed_commands.push("source".into());
+
+        // Regression test for the exact shape reported in production logs:
+        // `source venv/bin/activate 2>/dev/null` was rejected as "disallowed
+        // redirection syntax" even though block_high_risk_commands is the
+        // default (true). Discarding to /dev/null can't leak or overwrite
+        // real files, so it should be exempt like heredocs are.
+        assert!(
+            p.is_command_allowed("source venv/bin/activate 2>/dev/null; python3 -c 'pass'"),
+            "stderr redirected to /dev/null should be allowed by default"
+        );
+        assert!(
+            p.is_command_allowed("python3 script.py >/dev/null"),
+            "stdout redirected to /dev/null should be allowed by default"
+        );
+        assert!(
+            p.is_command_allowed("python3 script.py >>/dev/null"),
+            "append-redirect to /dev/null should be allowed by default"
+        );
+        assert!(
+            p.is_command_allowed("python3 script.py </dev/null"),
+            "input redirected from /dev/null should be allowed by default"
         );
     }
 
