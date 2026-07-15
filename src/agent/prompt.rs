@@ -459,6 +459,7 @@ pub fn build_system_prompt_with_mode(
     }
 
     // ── 9. Date & Time ─────────────────────────────────────────
+    prompt.push_str("## Date & Time\n\n");
     let datetime_str = format_datetime(config.local_context.timezone.as_deref());
     let _ = writeln!(prompt, "{DATETIME_HEADER} {datetime_str}\n");
 

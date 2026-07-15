@@ -3,6 +3,7 @@ package com.agentzero.client.data
 import com.agentzero.client.data.model.CostSummary
 import com.agentzero.client.data.model.CronAddBody
 import com.agentzero.client.data.model.CronJob
+import com.agentzero.client.data.model.DiagResult
 import com.agentzero.client.data.model.MemoryEntry
 import com.agentzero.client.data.model.MemoryStoreBody
 import com.agentzero.client.data.model.PairedDevice
@@ -153,6 +154,11 @@ class GatewayClient(
 
     suspend fun deleteCronJob(config: ServerConfig, id: String) {
         delete(config, "/api/cron/${encode(id)}", auth = true)
+    }
+
+    suspend fun runDoctor(config: ServerConfig): List<DiagResult> {
+        val body = post(config, "/api/doctor", "{}", auth = true)
+        return unwrapList(body, "results", DiagResult.serializer())
     }
 
     private suspend inline fun <reified T> getJson(

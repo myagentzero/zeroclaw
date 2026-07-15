@@ -72,6 +72,13 @@ data class MemoryStoreBody(
 )
 
 @Serializable
+data class DiagResult(
+    val severity: String = "ok",
+    val category: String = "",
+    val message: String = "",
+)
+
+@Serializable
 data class PairedDevice(
     val id: String,
     @SerialName("token_fingerprint") val tokenFingerprint: String,

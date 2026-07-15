@@ -17,6 +17,7 @@ import androidx.compose.material.icons.filled.Dashboard
 import androidx.compose.material.icons.filled.Devices
 import androidx.compose.material.icons.filled.Dns
 import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.MedicalServices
 import androidx.compose.material.icons.filled.Memory
 import androidx.compose.material.icons.filled.MonitorHeart
 import androidx.compose.material.icons.filled.Menu
@@ -55,6 +56,7 @@ import com.agentzero.client.data.model.ServerConfig
 import com.agentzero.client.ui.screens.AgentChatScreen
 import com.agentzero.client.ui.screens.DashboardScreen
 import com.agentzero.client.ui.screens.DevicesScreen
+import com.agentzero.client.ui.screens.DoctorScreen
 import com.agentzero.client.ui.screens.MemoryScreen
 import com.agentzero.client.ui.screens.MissionControlScreen
 import com.agentzero.client.ui.screens.ScheduledJobsScreen
@@ -73,6 +75,7 @@ enum class MainDestination(
     ScheduledJobs("Scheduled Jobs", Icons.Default.Schedule),
     Workspace("Workspace", Icons.Default.Folder),
     Devices("Devices", Icons.Default.Devices),
+    Doctor("Doctor", Icons.Default.MedicalServices),
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -142,6 +145,7 @@ fun MainShell(
                     MainDestination.ScheduledJobs -> ScheduledJobsScreen(config, container)
                     MainDestination.Workspace -> WorkspaceScreen(config, container)
                     MainDestination.Devices -> DevicesScreen(config, container)
+                    MainDestination.Doctor -> DoctorScreen(config, container)
                 }
             }
         }
