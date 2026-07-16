@@ -23,7 +23,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -73,8 +72,6 @@ fun DoctorScreen(config: ServerConfig, container: AppContainer) {
             loading = false
         }
     }
-
-    LaunchedEffect(config) { run() }
 
     val okCount = results?.count { it.severity == "ok" } ?: 0
     val warnCount = results?.count { it.severity == "warn" } ?: 0

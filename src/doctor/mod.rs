@@ -1222,9 +1222,6 @@ fn check_daemon_state(config: &Config, items: &mut Vec<DiagItem>) {
 fn check_environment(items: &mut Vec<DiagItem>) {
     let cat = "environment";
 
-    // git
-    check_command_available("git", &["--version"], cat, items);
-
     // HOME
     if std::env::var("HOME").is_ok() || std::env::var("USERPROFILE").is_ok() {
         items.push(DiagItem::ok(cat, "home directory env set"));
@@ -1570,10 +1567,20 @@ mod tests {
     }
 
     #[test]
-    fn environment_check_finds_git() {
+    fn environment_check_does_not_duplicate_git() {
+        // git is reported under the cli-tools category (check_cli_tools), not environment.
         let mut items = Vec::new();
         check_environment(&mut items);
-        let git_item = items.iter().find(|i| i.message.starts_with("git:"));
+        assert!(!items.iter().any(|i| i.message.starts_with("git:")));
+    }
+
+    #[test]
+    fn cli_tools_check_finds_git() {
+        let mut items = Vec::new();
+        check_cli_tools(&mut items);
+        let git_item = items
+            .iter()
+            .find(|i| i.category == "cli-tools" && i.message.starts_with("git ("));
         // git should be available in any CI/dev environment
         assert!(git_item.is_some());
         assert_eq!(git_item.unwrap().severity, Severity::Ok);
