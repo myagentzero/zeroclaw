@@ -1162,8 +1162,14 @@ fn resolve_lmstudio_connection(api_url: Option<&str>, key: Option<&str>) -> (Str
 }
 
 /// Factory: create provider with optional base URL and runtime options.
+///
+/// `pub(crate)` (rather than private) so callers that need the raw,
+/// unwrapped provider — e.g. `doctor::check_provider_health`, which relies
+/// on `warmup()` errors actually propagating instead of being absorbed by
+/// `ReliableProvider`/`RouterProvider`'s non-fatal warmup — can build it
+/// directly without going through the resilience/routing wrappers.
 #[allow(clippy::too_many_lines)]
-fn create_provider_with_url_and_options(
+pub(crate) fn create_provider_with_url_and_options(
     name: &str,
     api_key: Option<&str>,
     api_url: Option<&str>,

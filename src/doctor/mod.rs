@@ -622,11 +622,18 @@ fn check_config_semantics(config: &Config, items: &mut Vec<DiagItem>) {
 
 /// Live connectivity health check for the configured default provider.
 ///
-/// Builds the provider the same way the daemon does at startup
-/// (`create_routed_provider_with_options` on a blocking task, using the same
-/// `ProviderRuntimeOptions`) and calls its `warmup()` hook — the same
-/// non-fatal connectivity probe (TLS/DNS/HTTP setup) used when channels and
-/// the gateway start up.
+/// Builds the *raw* primary provider directly (`create_provider_with_url_and_options`,
+/// bypassing the `ReliableProvider`/`RouterProvider` resilience wrappers the daemon
+/// uses at startup) and calls its `warmup()` hook — the same connectivity probe
+/// (TLS/DNS/HTTP setup) used when channels and the gateway start up.
+///
+/// The resilience wrappers intentionally treat `warmup()` failures as non-fatal
+/// (they log a warning and still return `Ok(())`, so a flaky provider never blocks
+/// daemon startup) — see `ReliableProvider::warmup` / `RouterProvider::warmup`. That
+/// swallowing behavior is wrong for a diagnostic check, since it would make this
+/// health check report "OK" even when the provider is completely unreachable. Building
+/// the unwrapped provider (same as `check_fallback_provider_health` already does for
+/// fallbacks) lets real connectivity errors propagate.
 async fn check_provider_health(config: &Config, items: &mut Vec<DiagItem>) {
     let cat = "providers";
 
@@ -655,21 +662,15 @@ async fn check_provider_health(config: &Config, items: &mut Vec<DiagItem>) {
         user_agent: config.effective_provider_user_agent(),
     };
 
-    let reliability = config.reliability.clone();
-    let model_routes = config.model_routes.clone();
     let api_key = config.api_key.clone();
     let api_url = config.api_url.clone();
     let build_provider_name = provider_name.clone();
-    let build_model = model.clone();
 
     let build_result = tokio::task::spawn_blocking(move || {
-        crate::providers::create_routed_provider_with_options(
+        crate::providers::create_provider_with_url_and_options(
             &build_provider_name,
             api_key.as_deref(),
             api_url.as_deref(),
-            &reliability,
-            &model_routes,
-            &build_model,
             &provider_runtime_options,
         )
     })
@@ -1447,6 +1448,29 @@ mod tests {
             .find(|i| i.message.contains("fallback provider"));
         assert!(fb_item.is_some());
         assert_eq!(fb_item.unwrap().severity, Severity::Warn);
+    }
+
+    #[tokio::test]
+    async fn provider_health_check_reports_unreachable_custom_provider() {
+        // Regression test: a custom provider pointing at an endpoint that
+        // refuses connections (simulating "not connected to VPN") must
+        // surface as an Error, not silently report OK. This previously
+        // passed because `check_provider_health` built the provider via
+        // `create_routed_provider_with_options`, which wraps it in a
+        // `ReliableProvider`/`RouterProvider` whose `warmup()` swallows all
+        // errors and always returns `Ok(())`.
+        let mut config = Config::default();
+        config.default_provider = Some("custom:http://127.0.0.1:1".into());
+        let mut items = Vec::new();
+        check_provider_health(&config, &mut items).await;
+
+        let health_item = items.iter().find(|i| i.message.contains("health check"));
+        assert!(
+            health_item.is_some(),
+            "expected a health check diagnostic item"
+        );
+        assert_eq!(health_item.unwrap().severity, Severity::Error);
+        assert!(health_item.unwrap().message.contains("health check failed"));
     }
 
     #[tokio::test]

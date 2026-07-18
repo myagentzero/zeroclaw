@@ -3089,26 +3089,33 @@ impl Provider for OpenAiCompatibleProvider {
     }
 
     async fn warmup(&self) -> anyhow::Result<()> {
-        if let Some(credential) = self.credential.as_ref() {
-            if self.name == "Custom" {
-                // Custom (LiteLLM) providers expose a lightweight liveliness
-                // endpoint that avoids consuming quota during warmup.
-                let url = format!("{}/health/liveliness", self.base_url);
-                let _ = self
-                    .apply_auth_header(self.http_client().get(&url), credential)
-                    .send()
-                    .await?;
-            } else {
-                // Hit the chat completions URL with a GET to establish the connection pool.
-                // The server will likely return 405 Method Not Allowed, which is fine -
-                // the goal is TLS handshake and HTTP/2 negotiation.
-                let url = self.chat_completions_url();
-                let _ = self
-                    .apply_auth_header(self.http_client().get(&url), credential)
-                    .send()
-                    .await?;
-            }
-        }
+        // Self-hosted OpenAI-compatible endpoints (Custom/BYOP, LM Studio,
+        // llama.cpp, SGLang, vLLM, Osaurus, ...) are commonly run without any
+        // credential at all — e.g. an internal server reachable only over a
+        // VPN. Gating the probe on `self.credential.is_some()` meant warmup
+        // silently no-op'd (reporting success) for exactly those endpoints,
+        // so real connectivity failures (VPN down, host unreachable) never
+        // surfaced. The probe must always run; the credential is only used
+        // to decide whether to attach an auth header.
+        let request = if self.name == "Custom" {
+            // Custom (LiteLLM) providers expose a lightweight liveliness
+            // endpoint that avoids consuming quota during warmup.
+            let url = format!("{}/health/liveliness", self.base_url);
+            self.http_client().get(&url)
+        } else {
+            // Hit the chat completions URL with a GET to establish the connection pool.
+            // The server will likely return 405 Method Not Allowed, which is fine -
+            // the goal is TLS handshake and HTTP/2 negotiation.
+            let url = self.chat_completions_url();
+            self.http_client().get(&url)
+        };
+
+        let request = match self.credential.as_ref() {
+            Some(credential) => self.apply_auth_header(request, credential),
+            None => request,
+        };
+
+        let _ = request.send().await?;
         Ok(())
     }
 
@@ -4678,10 +4685,41 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn warmup_without_key_is_noop() {
-        let provider = make_provider("test", "https://example.com", None);
+    async fn warmup_without_key_still_probes_reachable_endpoint() {
+        // Self-hosted endpoints (LM Studio, vLLM, Custom/BYOP, ...) are
+        // commonly run without any credential. Warmup must still attempt
+        // the network probe (and succeed) rather than no-op just because
+        // no credential is configured.
+        async fn not_allowed() -> StatusCode {
+            StatusCode::METHOD_NOT_ALLOWED
+        }
+
+        let app = Router::new().route("/chat/completions", axum::routing::get(not_allowed));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind test server");
+        let addr = listener.local_addr().expect("server local addr");
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.expect("serve test app");
+        });
+
+        let provider = make_provider("test", &format!("http://{}", addr), None);
         let result = provider.warmup().await;
         assert!(result.is_ok());
+
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn warmup_without_key_surfaces_connection_failure() {
+        // Regression test: previously, a missing credential made warmup()
+        // no-op and always return `Ok(())`, so an unreachable self-hosted
+        // endpoint (e.g. VPN disconnected) was indistinguishable from a
+        // healthy one. Port 1 refuses connections immediately, simulating
+        // an unreachable host without relying on a real network timeout.
+        let provider = make_provider("test", "http://127.0.0.1:1", None);
+        let result = provider.warmup().await;
+        assert!(result.is_err());
     }
 
     // ══════════════════════════════════════════════════════════
