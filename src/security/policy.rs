@@ -976,6 +976,98 @@ struct CommandAllowlistEvaluation {
     requires_explicit_approval: bool,
 }
 
+/// Best-effort extraction of the URL/method a blocked `curl`/`wget` shell
+/// command was targeting, so the rejection message can point the model at a
+/// ready-to-use `http_request` call instead of a generic warning.
+fn curl_wget_http_request_hint(command: &str) -> String {
+    let mut url: Option<String> = None;
+    let mut method = "GET".to_string();
+
+    'segments: for segment in split_unquoted_segments(command) {
+        let cmd_part = skip_env_assignments(&segment);
+        let mut words = cmd_part.split_whitespace();
+        let Some(base_raw) = words.next() else {
+            continue;
+        };
+        let base = base_raw
+            .rsplit('/')
+            .next()
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        if base != "curl" && base != "wget" {
+            continue;
+        }
+
+        let mut expect_method_value = false;
+        for token in words {
+            let candidate = strip_wrapping_quotes(token);
+
+            if expect_method_value {
+                method = candidate
+                    .trim_matches('\'')
+                    .trim_matches('"')
+                    .to_ascii_uppercase();
+                expect_method_value = false;
+                continue;
+            }
+
+            if candidate == "-X" || candidate == "--request" {
+                expect_method_value = true;
+                continue;
+            }
+            if let Some(value) = candidate
+                .strip_prefix("-X")
+                .filter(|v| !v.is_empty())
+                .or_else(|| candidate.strip_prefix("--request="))
+                .or_else(|| candidate.strip_prefix("--method="))
+            {
+                method = value.to_ascii_uppercase();
+                continue;
+            }
+            if matches!(
+                candidate,
+                "-d" | "--data"
+                    | "--data-raw"
+                    | "--data-binary"
+                    | "--data-urlencode"
+                    | "-F"
+                    | "--form"
+                    | "--post-data"
+                    | "--post-file"
+            ) || candidate.starts_with("--post-data=")
+                || candidate.starts_with("--post-file=")
+                || candidate.starts_with("--data=")
+            {
+                if method == "GET" {
+                    method = "POST".to_string();
+                }
+                continue;
+            }
+
+            if (candidate.starts_with("http://") || candidate.starts_with("https://"))
+                && url.is_none()
+            {
+                url = Some(candidate.trim_matches(['\'', '"']).to_string());
+            }
+        }
+
+        if url.is_some() {
+            break 'segments;
+        }
+    }
+
+    match url {
+        Some(url) => format!(
+            "use the `http_request` tool instead, e.g. call it with {{\"url\": \"{url}\", \"method\": \"{method}\"}} (the domain must be present in the configured allowed_domains)"
+        ),
+        None => {
+            "use the `http_request` tool (or `browser` for rendered pages) with the target URL; \
+             the domain must be present in the configured allowed_domains"
+                .to_string()
+        }
+    }
+}
+
 fn is_high_risk_base_command(base: &str) -> bool {
     matches!(
         base,
@@ -1436,10 +1528,10 @@ impl SecurityPolicy {
             if self.block_high_risk_commands && !allowlist_eval.high_risk_overridden {
                 let lower = command.to_ascii_lowercase();
                 if lower.contains("curl") || lower.contains("wget") {
-                    return Err(
-                        "Command blocked: high-risk command is disallowed by policy. Shell curl/wget are blocked; use `http_request` or `browser` with configured allowed_domains."
-                            .into(),
-                    );
+                    let hint = curl_wget_http_request_hint(command);
+                    return Err(format!(
+                        "Command blocked: shell curl/wget are disallowed by policy. Instead, {hint}."
+                    ));
                 }
                 return Err("Command blocked: high-risk command is disallowed by policy".into());
             }
@@ -2448,6 +2540,54 @@ mod tests {
         let result = p.validate_command_execution("rm -rf tmp_test_dir", true);
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("high-risk"));
+    }
+
+    #[test]
+    fn validate_command_blocked_curl_suggests_http_request_call_with_url() {
+        let p = SecurityPolicy {
+            autonomy: AutonomyLevel::Full,
+            allowed_commands: vec!["curl".into()],
+            ..SecurityPolicy::default()
+        };
+
+        let err = p
+            .validate_command_execution("curl -X POST https://api.example.com/v1/items", true)
+            .unwrap_err();
+        assert!(err.contains("http_request"), "message was: {err}");
+        assert!(
+            err.contains("\"url\": \"https://api.example.com/v1/items\""),
+            "message was: {err}"
+        );
+        assert!(err.contains("\"method\": \"POST\""), "message was: {err}");
+    }
+
+    #[test]
+    fn validate_command_blocked_curl_infers_post_from_data_flag() {
+        let p = SecurityPolicy {
+            autonomy: AutonomyLevel::Full,
+            allowed_commands: vec!["curl".into()],
+            ..SecurityPolicy::default()
+        };
+
+        let err = p
+            .validate_command_execution("curl -d '{\"a\":1}' https://api.example.com/items", true)
+            .unwrap_err();
+        assert!(err.contains("\"method\": \"POST\""), "message was: {err}");
+    }
+
+    #[test]
+    fn validate_command_blocked_wget_without_url_gets_generic_hint() {
+        let p = SecurityPolicy {
+            autonomy: AutonomyLevel::Full,
+            allowed_commands: vec!["wget".into()],
+            ..SecurityPolicy::default()
+        };
+
+        let err = p
+            .validate_command_execution("wget --help", true)
+            .unwrap_err();
+        assert!(err.contains("http_request"), "message was: {err}");
+        assert!(err.contains("browser"), "message was: {err}");
     }
 
     #[test]
