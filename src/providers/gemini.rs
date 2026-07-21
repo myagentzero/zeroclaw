@@ -158,10 +158,6 @@ struct InlineDataPart {
 
 #[derive(Debug, Serialize, Clone)]
 struct GenerationConfig {
-    /// Omitted by default; only sent when the upstream explicitly requires it.
-    /// See [`super::is_temperature_required_error`].
-    #[serde(skip_serializing_if = "Option::is_none")]
-    temperature: Option<f64>,
     #[serde(rename = "maxOutputTokens")]
     max_output_tokens: u32,
 }
@@ -1011,7 +1007,6 @@ impl GeminiProvider {
         contents: Vec<Content>,
         system_instruction: Option<Content>,
         model: &str,
-        temperature: f64,
     ) -> anyhow::Result<(
         Option<String>,
         Option<TokenUsage>,
@@ -1060,11 +1055,10 @@ impl GeminiProvider {
             _ => (None, None),
         };
 
-        let mut request = GenerateContentRequest {
+        let request = GenerateContentRequest {
             contents,
             system_instruction,
             generation_config: GenerationConfig {
-                temperature: None,
                 max_output_tokens: 8192,
             },
         };
@@ -1088,28 +1082,7 @@ impl GeminiProvider {
             let status = response.status();
             let error_text = response.text().await.unwrap_or_default();
 
-            if super::is_temperature_required_error(status, &error_text)
-                && request.generation_config.temperature.is_none()
-            {
-                tracing::warn!(
-                    provider = "gemini",
-                    model = %model,
-                    "Upstream requires temperature; retrying with configured value"
-                );
-                request.generation_config.temperature = Some(temperature);
-                response = self
-                    .build_generate_content_request(
-                        auth,
-                        &url,
-                        &request,
-                        model,
-                        true,
-                        project.as_deref(),
-                        oauth_token.as_deref(),
-                    )
-                    .send()
-                    .await?;
-            } else if auth.is_oauth() && Self::should_rotate_oauth_on_error(status, &error_text) {
+            if auth.is_oauth() && Self::should_rotate_oauth_on_error(status, &error_text) {
                 // For CLI OAuth: rotate credentials
                 // For ManagedOAuth: AuthService handles refresh, just retry
                 let can_retry = match auth {
@@ -1254,7 +1227,7 @@ impl Provider for GeminiProvider {
         system_prompt: Option<&str>,
         message: &str,
         model: &str,
-        temperature: f64,
+        _temperature: f64,
     ) -> anyhow::Result<String> {
         let system_instruction = system_prompt.map(|sys| Content {
             role: None,
@@ -1269,7 +1242,7 @@ impl Provider for GeminiProvider {
         }];
 
         let (text_opt, _usage, _stop_reason, _raw_stop_reason) = self
-            .send_generate_content(contents, system_instruction, model, temperature)
+            .send_generate_content(contents, system_instruction, model)
             .await?;
         let text = text_opt.ok_or_else(|| anyhow::anyhow!("No response from Gemini"))?;
         Ok(text)
@@ -1279,7 +1252,7 @@ impl Provider for GeminiProvider {
         &self,
         messages: &[ChatMessage],
         model: &str,
-        temperature: f64,
+        _temperature: f64,
     ) -> anyhow::Result<String> {
         let mut system_parts: Vec<&str> = Vec::new();
         let mut contents: Vec<Content> = Vec::new();
@@ -1320,7 +1293,7 @@ impl Provider for GeminiProvider {
         };
 
         let (text_opt, _usage, _stop_reason, _raw_stop_reason) = self
-            .send_generate_content(contents, system_instruction, model, temperature)
+            .send_generate_content(contents, system_instruction, model)
             .await?;
         let text = text_opt.ok_or_else(|| anyhow::anyhow!("No response from Gemini"))?;
         Ok(text)
@@ -1330,7 +1303,7 @@ impl Provider for GeminiProvider {
         &self,
         request: crate::providers::traits::ChatRequest<'_>,
         model: &str,
-        temperature: f64,
+        _temperature: f64,
     ) -> anyhow::Result<ChatResponse> {
         let mut system_parts: Vec<&str> = Vec::new();
         let mut contents: Vec<Content> = Vec::new();
@@ -1364,7 +1337,7 @@ impl Provider for GeminiProvider {
         };
 
         let (text, usage, stop_reason, raw_stop_reason) = self
-            .send_generate_content(contents, system_instruction, model, temperature)
+            .send_generate_content(contents, system_instruction, model)
             .await?;
 
         Ok(ChatResponse {
@@ -1653,7 +1626,6 @@ mod tests {
             }],
             system_instruction: None,
             generation_config: GenerationConfig {
-                temperature: Some(0.7),
                 max_output_tokens: 8192,
             },
         };
@@ -1694,7 +1666,6 @@ mod tests {
             }],
             system_instruction: None,
             generation_config: GenerationConfig {
-                temperature: Some(0.7),
                 max_output_tokens: 8192,
             },
         };
@@ -1738,7 +1709,6 @@ mod tests {
             }],
             system_instruction: None,
             generation_config: GenerationConfig {
-                temperature: Some(0.7),
                 max_output_tokens: 8192,
             },
         };
@@ -1775,7 +1745,6 @@ mod tests {
                 }],
             }),
             generation_config: GenerationConfig {
-                temperature: Some(0.7),
                 max_output_tokens: 8192,
             },
         };
@@ -1785,32 +1754,7 @@ mod tests {
         assert!(json.contains("\"text\":\"Hello\""));
         assert!(json.contains("\"systemInstruction\""));
         assert!(!json.contains("\"system_instruction\""));
-        assert!(json.contains("\"temperature\":0.7"));
         assert!(json.contains("\"maxOutputTokens\":8192"));
-    }
-
-    #[test]
-    fn generation_config_omits_temperature_when_none() {
-        let config = GenerationConfig {
-            temperature: None,
-            max_output_tokens: 8192,
-        };
-        let json = serde_json::to_string(&config).unwrap();
-        assert!(
-            !json.contains("temperature"),
-            "temperature should be omitted by default: {json}"
-        );
-        assert!(json.contains("\"maxOutputTokens\":8192"));
-    }
-
-    #[test]
-    fn generation_config_includes_temperature_when_set() {
-        let config = GenerationConfig {
-            temperature: Some(0.9),
-            max_output_tokens: 8192,
-        };
-        let json = serde_json::to_string(&config).unwrap();
-        assert!(json.contains("\"temperature\":0.9"));
     }
 
     #[test]
@@ -1896,7 +1840,6 @@ mod tests {
                 }],
                 system_instruction: None,
                 generation_config: Some(GenerationConfig {
-                    temperature: Some(0.7),
                     max_output_tokens: 8192,
                 }),
             },
@@ -1910,7 +1853,6 @@ mod tests {
         assert!(json.contains("\"user_prompt_id\":\"prompt-123\""));
         assert!(json.contains("\"project\":\"test-project\""));
         assert!(json.contains("\"role\":\"user\""));
-        assert!(json.contains("\"temperature\":0.7"));
     }
 
     #[test]

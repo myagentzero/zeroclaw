@@ -20,10 +20,6 @@ struct ChatRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     system: Option<String>,
     messages: Vec<Message>,
-    /// Omitted by default; only sent when the upstream explicitly requires it.
-    /// See [`super::is_temperature_required_error`].
-    #[serde(skip_serializing_if = "Option::is_none")]
-    temperature: Option<f64>,
 }
 
 #[derive(Debug, Serialize)]
@@ -52,12 +48,6 @@ struct NativeChatRequest<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     system: Option<SystemPrompt>,
     messages: Vec<NativeMessage>,
-    /// Omitted by default; only sent when the upstream explicitly requires it.
-    /// Some newer models (e.g. extended-thinking/reasoning variants) reject
-    /// an explicit temperature outright, so we don't send one unless asked.
-    /// See [`super::is_temperature_required_error`].
-    #[serde(skip_serializing_if = "Option::is_none")]
-    temperature: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     tools: Option<Vec<NativeToolSpec<'a>>>,
 }
@@ -562,7 +552,7 @@ impl Provider for AnthropicProvider {
         system_prompt: Option<&str>,
         message: &str,
         model: &str,
-        temperature: f64,
+        _temperature: f64,
     ) -> anyhow::Result<String> {
         let credential = self.credential.as_ref().ok_or_else(|| {
             anyhow::anyhow!(
@@ -570,7 +560,7 @@ impl Provider for AnthropicProvider {
             )
         })?;
 
-        let mut request = ChatRequest {
+        let request = ChatRequest {
             model: model.to_string(),
             max_tokens: 4096,
             system: system_prompt.map(ToString::to_string),
@@ -578,33 +568,15 @@ impl Provider for AnthropicProvider {
                 role: "user".to_string(),
                 content: message.to_string(),
             }],
-            temperature: None,
         };
 
-        let mut response = self.post_messages(credential, &request).await?;
+        let response = self.post_messages(credential, &request).await?;
 
         if !response.status().is_success() {
             let status = response.status();
             let body = response.text().await?;
-            if super::is_temperature_required_error(status, &body) {
-                tracing::warn!(
-                    provider = "anthropic",
-                    model = %model,
-                    "Upstream requires temperature; retrying with configured value"
-                );
-                request.temperature = Some(temperature);
-                response = self.post_messages(credential, &request).await?;
-            } else {
-                let sanitized = super::sanitize_api_error(&body);
-                anyhow::bail!("Anthropic API error ({status}): {sanitized}");
-            }
-
-            if !response.status().is_success() {
-                let status = response.status();
-                let body = response.text().await?;
-                let sanitized = super::sanitize_api_error(&body);
-                anyhow::bail!("Anthropic API error ({status}): {sanitized}");
-            }
+            let sanitized = super::sanitize_api_error(&body);
+            anyhow::bail!("Anthropic API error ({status}): {sanitized}");
         }
 
         let chat_response: ChatResponse = response.json().await?;
@@ -615,7 +587,7 @@ impl Provider for AnthropicProvider {
         &self,
         request: ProviderChatRequest<'_>,
         model: &str,
-        temperature: f64,
+        _temperature: f64,
     ) -> anyhow::Result<ProviderChatResponse> {
         let credential = self.credential.as_ref().ok_or_else(|| {
             anyhow::anyhow!(
@@ -630,39 +602,21 @@ impl Provider for AnthropicProvider {
             Self::apply_cache_to_last_message(&mut messages);
         }
 
-        let mut native_request = NativeChatRequest {
+        let native_request = NativeChatRequest {
             model: model.to_string(),
             max_tokens: 4096,
             system: system_prompt,
             messages,
-            temperature: None,
             tools: Self::convert_tools(request.tools),
         };
 
-        let mut response = self.post_messages(credential, &native_request).await?;
+        let response = self.post_messages(credential, &native_request).await?;
 
         if !response.status().is_success() {
             let status = response.status();
             let body = response.text().await?;
-            if super::is_temperature_required_error(status, &body) {
-                tracing::warn!(
-                    provider = "anthropic",
-                    model = %model,
-                    "Upstream requires temperature; retrying with configured value"
-                );
-                native_request.temperature = Some(temperature);
-                response = self.post_messages(credential, &native_request).await?;
-            } else {
-                let sanitized = super::sanitize_api_error(&body);
-                anyhow::bail!("Anthropic API error ({status}): {sanitized}");
-            }
-
-            if !response.status().is_success() {
-                let status = response.status();
-                let body = response.text().await?;
-                let sanitized = super::sanitize_api_error(&body);
-                anyhow::bail!("Anthropic API error ({status}): {sanitized}");
-            }
+            let sanitized = super::sanitize_api_error(&body);
+            anyhow::bail!("Anthropic API error ({status}): {sanitized}");
         }
 
         // Extract quota metadata from response headers before consuming body
@@ -899,16 +853,11 @@ mod tests {
                 role: "user".to_string(),
                 content: "hello".to_string(),
             }],
-            temperature: None,
         };
         let json = serde_json::to_string(&req).unwrap();
         assert!(
             !json.contains("system"),
             "system field should be skipped when None"
-        );
-        assert!(
-            !json.contains("temperature"),
-            "temperature should be omitted by default"
         );
         assert!(json.contains("claude-3-opus"));
         assert!(json.contains("hello"));
@@ -924,7 +873,6 @@ mod tests {
                 role: "user".to_string(),
                 content: "hello".to_string(),
             }],
-            temperature: None,
         };
         let json = serde_json::to_string(&req).unwrap();
         assert!(json.contains("\"system\":\"You are AgentZero\""));
@@ -954,34 +902,6 @@ mod tests {
         assert_eq!(resp.content.len(), 2);
         assert_eq!(resp.content[0].text.as_deref(), Some("First"));
         assert_eq!(resp.content[1].text.as_deref(), Some("Second"));
-    }
-
-    #[test]
-    fn temperature_range_serializes_when_set() {
-        for temp in [0.0, 0.5, 1.0, 2.0] {
-            let req = ChatRequest {
-                model: "claude-3-opus".to_string(),
-                max_tokens: 4096,
-                system: None,
-                messages: vec![],
-                temperature: Some(temp),
-            };
-            let json = serde_json::to_string(&req).unwrap();
-            assert!(json.contains(&format!("{temp}")));
-        }
-    }
-
-    #[test]
-    fn temperature_omitted_when_none() {
-        let req = ChatRequest {
-            model: "claude-3-opus".to_string(),
-            max_tokens: 4096,
-            system: None,
-            messages: vec![],
-            temperature: None,
-        };
-        let json = serde_json::to_string(&req).unwrap();
-        assert!(!json.contains("temperature"));
     }
 
     #[test]
@@ -1356,7 +1276,6 @@ mod tests {
                     cache_control: None,
                 }],
             }],
-            temperature: None,
             tools: None,
         };
 
@@ -1537,167 +1456,10 @@ mod tests {
             "Missing input_schema"
         );
 
-        // Temperature is omitted by default (only sent if upstream demands it).
+        // Temperature is never sent; the provider ignores the caller's value.
         assert!(
             body.get("temperature").is_none(),
-            "temperature should be omitted from the initial request: {body}"
-        );
-
-        server_handle.abort();
-    }
-
-    /// Integration test: upstream rejects the (temperature-less) request with
-    /// a "temperature is required" 400, so AgentZero should retry once with
-    /// the caller-configured temperature.
-    #[tokio::test]
-    async fn chat_retries_once_when_upstream_requires_temperature() {
-        use axum::{Json, Router, extract::State, routing::post};
-        use std::sync::Arc;
-        use tokio::net::TcpListener;
-        use tokio::sync::Mutex;
-
-        #[derive(Clone, Default)]
-        struct RetryState {
-            calls: Arc<Mutex<Vec<serde_json::Value>>>,
-        }
-
-        async fn endpoint(
-            State(state): State<RetryState>,
-            Json(payload): Json<serde_json::Value>,
-        ) -> (reqwest::StatusCode, Json<serde_json::Value>) {
-            let mut calls = state.calls.lock().await;
-            calls.push(payload.clone());
-            let has_temperature = payload.get("temperature").is_some();
-            drop(calls);
-
-            if !has_temperature {
-                (
-                    reqwest::StatusCode::BAD_REQUEST,
-                    Json(serde_json::json!({
-                        "error": {"message": "temperature is required"}
-                    })),
-                )
-            } else {
-                (
-                    reqwest::StatusCode::OK,
-                    Json(serde_json::json!({
-                        "content": [{"type": "text", "text": "ok"}]
-                    })),
-                )
-            }
-        }
-
-        let state = RetryState::default();
-        let app = Router::new()
-            .route("/v1/messages", post(endpoint))
-            .with_state(state.clone());
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-        let server_handle = tokio::spawn(async move {
-            axum::serve(listener, app).await.unwrap();
-        });
-
-        let provider = AnthropicProvider {
-            credential: Some("test-key".to_string()),
-            base_url: format!("http://{addr}"),
-        };
-
-        let messages = vec![ChatMessage::user("hi")];
-        let result = provider
-            .chat(
-                ProviderChatRequest {
-                    messages: &messages,
-                    tools: None,
-                },
-                "legacy-model",
-                0.42,
-            )
-            .await
-            .expect("retry path should succeed");
-        assert_eq!(result.text.as_deref(), Some("ok"));
-
-        let calls = state.calls.lock().await.clone();
-        assert_eq!(calls.len(), 2, "expected one retry after the initial 400");
-        assert!(
-            calls[0].get("temperature").is_none(),
-            "first call must omit temperature: {}",
-            calls[0]
-        );
-        assert_eq!(
-            calls[1].get("temperature").and_then(|v| v.as_f64()),
-            Some(0.42),
-            "retry must carry the configured temperature: {}",
-            calls[1]
-        );
-
-        server_handle.abort();
-    }
-
-    /// Integration test: upstream rejects with "temperature is deprecated for
-    /// this model" — AgentZero must NOT retry with an explicit temperature
-    /// since the model is actively refusing one (retrying would just fail again).
-    #[tokio::test]
-    async fn chat_does_not_retry_when_temperature_is_deprecated() {
-        use axum::{Json, Router, extract::State, routing::post};
-        use std::sync::Arc;
-        use tokio::net::TcpListener;
-        use tokio::sync::Mutex;
-
-        #[derive(Clone, Default)]
-        struct CallState {
-            calls: Arc<Mutex<Vec<serde_json::Value>>>,
-        }
-
-        async fn endpoint(
-            State(state): State<CallState>,
-            Json(payload): Json<serde_json::Value>,
-        ) -> (reqwest::StatusCode, Json<serde_json::Value>) {
-            state.calls.lock().await.push(payload);
-            (
-                reqwest::StatusCode::BAD_REQUEST,
-                Json(serde_json::json!({
-                    "error": {"message": "temperature is deprecated for this model"}
-                })),
-            )
-        }
-
-        let state = CallState::default();
-        let app = Router::new()
-            .route("/v1/messages", post(endpoint))
-            .with_state(state.clone());
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-        let server_handle = tokio::spawn(async move {
-            axum::serve(listener, app).await.unwrap();
-        });
-
-        let provider = AnthropicProvider {
-            credential: Some("test-key".to_string()),
-            base_url: format!("http://{addr}"),
-        };
-
-        let messages = vec![ChatMessage::user("hi")];
-        let result = provider
-            .chat(
-                ProviderChatRequest {
-                    messages: &messages,
-                    tools: None,
-                },
-                "claude-sonnet-5",
-                0.7,
-            )
-            .await;
-        assert!(result.is_err());
-        assert!(
-            result.unwrap_err().to_string().contains("deprecated"),
-            "error should surface the upstream deprecation message"
-        );
-
-        let calls = state.calls.lock().await.clone();
-        assert_eq!(
-            calls.len(),
-            1,
-            "must not retry when the model refuses temperature outright"
+            "temperature should never be sent: {body}"
         );
 
         server_handle.abort();

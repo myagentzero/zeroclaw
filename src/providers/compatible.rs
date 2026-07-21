@@ -507,8 +507,6 @@ struct ApiChatRequest {
     model: String,
     messages: Vec<Message>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    temperature: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     max_tokens: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     stream: Option<bool>,
@@ -713,8 +711,6 @@ struct Function {
 struct NativeChatRequest {
     model: String,
     messages: Vec<NativeMessage>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    temperature: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     max_tokens: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -2219,18 +2215,11 @@ impl OpenAiCompatibleProvider {
         super::is_native_tool_schema_rejection(status, error)
     }
 
-    /// See [`super::is_temperature_required_error`] for the detection rules.
-    fn is_temperature_required_error(status: reqwest::StatusCode, error: &str) -> bool {
-        super::is_temperature_required_error(status, error)
-    }
-
-    async fn post_api_chat_with_temperature_retry(
+    async fn post_api_chat(
         &self,
         credential: &str,
         url: &str,
         request: ApiChatRequest,
-        temperature: f64,
-        model: &str,
     ) -> reqwest::Result<ChatSendResult> {
         let response = self
             .apply_auth_header(self.http_client().post(url).json(&request), credential)
@@ -2241,43 +2230,14 @@ impl OpenAiCompatibleProvider {
         }
         let status = response.status();
         let body = response.text().await?;
-        if Self::is_temperature_required_error(status, &body) && request.temperature.is_none() {
-            tracing::warn!(
-                provider = %self.name,
-                model = %model,
-                "Upstream requires temperature; retrying with configured value"
-            );
-            let retry_request = ApiChatRequest {
-                temperature: Some(temperature),
-                ..request
-            };
-            let retry_response = self
-                .apply_auth_header(
-                    self.http_client().post(url).json(&retry_request),
-                    credential,
-                )
-                .send()
-                .await?;
-            if retry_response.status().is_success() {
-                return Ok(ChatSendResult::Success(retry_response));
-            }
-            let retry_status = retry_response.status();
-            let retry_body = retry_response.text().await?;
-            return Ok(ChatSendResult::NonSuccess {
-                status: retry_status,
-                body: retry_body,
-            });
-        }
         Ok(ChatSendResult::NonSuccess { status, body })
     }
 
-    async fn post_native_chat_with_temperature_retry(
+    async fn post_native_chat(
         &self,
         credential: &str,
         url: &str,
         request: NativeChatRequest,
-        temperature: f64,
-        model: &str,
     ) -> reqwest::Result<ChatSendResult> {
         let response = self
             .apply_auth_header(self.http_client().post(url).json(&request), credential)
@@ -2288,33 +2248,6 @@ impl OpenAiCompatibleProvider {
         }
         let status = response.status();
         let body = response.text().await?;
-        if Self::is_temperature_required_error(status, &body) && request.temperature.is_none() {
-            tracing::warn!(
-                provider = %self.name,
-                model = %model,
-                "Upstream requires temperature; retrying with configured value"
-            );
-            let retry_request = NativeChatRequest {
-                temperature: Some(temperature),
-                ..request
-            };
-            let retry_response = self
-                .apply_auth_header(
-                    self.http_client().post(url).json(&retry_request),
-                    credential,
-                )
-                .send()
-                .await?;
-            if retry_response.status().is_success() {
-                return Ok(ChatSendResult::Success(retry_response));
-            }
-            let retry_status = retry_response.status();
-            let retry_body = retry_response.text().await?;
-            return Ok(ChatSendResult::NonSuccess {
-                status: retry_status,
-                body: retry_body,
-            });
-        }
         Ok(ChatSendResult::NonSuccess { status, body })
     }
 
@@ -2394,7 +2327,6 @@ impl Provider for OpenAiCompatibleProvider {
         let request = ApiChatRequest {
             model: model.to_string(),
             messages,
-            temperature: None,
             max_tokens: self.effective_max_tokens(),
             stream: Some(false),
             tools: None,
@@ -2426,10 +2358,7 @@ impl Provider for OpenAiCompatibleProvider {
             model = %model,
             "Calling Chat Completions API"
         );
-        let response = match self
-            .post_api_chat_with_temperature_retry(credential, &url, request, temperature, model)
-            .await
-        {
+        let response = match self.post_api_chat(credential, &url, request).await {
             Ok(ChatSendResult::Success(response)) => response,
             Ok(ChatSendResult::NonSuccess {
                 status,
@@ -2533,7 +2462,6 @@ impl Provider for OpenAiCompatibleProvider {
         let request = ApiChatRequest {
             model: model.to_string(),
             messages: api_messages,
-            temperature: None,
             max_tokens: self.effective_max_tokens(),
             stream: Some(false),
             tools: None,
@@ -2553,10 +2481,7 @@ impl Provider for OpenAiCompatibleProvider {
             "Calling Chat Completions API"
         );
         let url = self.chat_completions_url();
-        let response = match self
-            .post_api_chat_with_temperature_retry(credential, &url, request, temperature, model)
-            .await
-        {
+        let response = match self.post_api_chat(credential, &url, request).await {
             Ok(ChatSendResult::Success(response)) => response,
             Ok(ChatSendResult::NonSuccess {
                 status,
@@ -2661,7 +2586,6 @@ impl Provider for OpenAiCompatibleProvider {
         let request = ApiChatRequest {
             model: model.to_string(),
             messages: api_messages,
-            temperature: None,
             max_tokens: self.effective_max_tokens(),
             stream: Some(false),
             tools: if tools.is_empty() {
@@ -2696,10 +2620,7 @@ impl Provider for OpenAiCompatibleProvider {
             "Calling Chat Completions API with tools"
         );
         let url = self.chat_completions_url();
-        let response = match self
-            .post_api_chat_with_temperature_retry(credential, &url, request, temperature, model)
-            .await
-        {
+        let response = match self.post_api_chat(credential, &url, request).await {
             Ok(ChatSendResult::Success(response)) => response,
             Ok(ChatSendResult::NonSuccess {
                 status,
@@ -2831,7 +2752,6 @@ impl Provider for OpenAiCompatibleProvider {
                 &effective_messages,
                 !self.merge_system_into_user,
             ),
-            temperature: None,
             max_tokens: self.effective_max_tokens(),
             stream: Some(false),
             tool_choice: tools.as_ref().map(|_| "auto".to_string()),
@@ -2859,13 +2779,7 @@ impl Provider for OpenAiCompatibleProvider {
         );
         let url = self.chat_completions_url();
         let response = match self
-            .post_native_chat_with_temperature_retry(
-                credential,
-                &url,
-                native_request,
-                temperature,
-                model,
-            )
+            .post_native_chat(credential, &url, native_request)
             .await
         {
             Ok(ChatSendResult::Success(response)) => response,
@@ -2965,7 +2879,7 @@ impl Provider for OpenAiCompatibleProvider {
         system_prompt: Option<&str>,
         message: &str,
         model: &str,
-        temperature: f64,
+        _temperature: f64,
         options: StreamOptions,
     ) -> stream::BoxStream<'static, StreamResult<StreamChunk>> {
         let credential = match self.credential.as_ref() {
@@ -2997,7 +2911,6 @@ impl Provider for OpenAiCompatibleProvider {
         let request = ApiChatRequest {
             model: model.to_string(),
             messages,
-            temperature: None,
             max_tokens: self.effective_max_tokens(),
             stream: Some(options.enabled),
             tools: None,
@@ -3008,7 +2921,6 @@ impl Provider for OpenAiCompatibleProvider {
         let url = self.chat_completions_url();
         let client = self.http_client();
         let auth_header = self.auth_header.clone();
-        let provider_name = self.name.clone();
 
         tracing::info!(
             provider = %self.name,
@@ -3020,65 +2932,44 @@ impl Provider for OpenAiCompatibleProvider {
         let (tx, rx) = tokio::sync::mpsc::channel::<StreamResult<StreamChunk>>(100);
 
         tokio::spawn(async move {
-            let mut current_request = request;
-            let mut attempt = 0u32;
+            // Build request with auth
+            let mut req_builder = client.post(&url).json(&request);
+            req_builder = match &auth_header {
+                AuthStyle::Bearer => {
+                    req_builder.header("Authorization", format!("Bearer {}", credential))
+                }
+                AuthStyle::XApiKey => req_builder.header("x-api-key", &credential),
+                AuthStyle::Custom(header) => req_builder.header(header, &credential),
+            };
+            req_builder = req_builder.header("Accept", "text/event-stream");
 
-            loop {
-                attempt += 1;
-
-                // Build request with auth
-                let mut req_builder = client.post(&url).json(&current_request);
-                req_builder = match &auth_header {
-                    AuthStyle::Bearer => {
-                        req_builder.header("Authorization", format!("Bearer {}", credential))
-                    }
-                    AuthStyle::XApiKey => req_builder.header("x-api-key", &credential),
-                    AuthStyle::Custom(header) => req_builder.header(header, &credential),
-                };
-                req_builder = req_builder.header("Accept", "text/event-stream");
-
-                let response = match req_builder.send().await {
-                    Ok(r) => r,
-                    Err(e) => {
-                        let _ = tx.send(Err(StreamError::Http(e))).await;
-                        return;
-                    }
-                };
-
-                if response.status().is_success() {
-                    let mut chunk_stream = sse_bytes_to_chunks(response, options.count_tokens);
-                    while let Some(chunk) = chunk_stream.next().await {
-                        if tx.send(chunk).await.is_err() {
-                            break;
-                        }
-                    }
+            let response = match req_builder.send().await {
+                Ok(r) => r,
+                Err(e) => {
+                    let _ = tx.send(Err(StreamError::Http(e))).await;
                     return;
                 }
+            };
 
-                let status = response.status();
-                let error = match response.text().await {
-                    Ok(e) => e,
-                    Err(_) => format!("HTTP error: {}", status),
-                };
-
-                if attempt == 1
-                    && OpenAiCompatibleProvider::is_temperature_required_error(status, &error)
-                    && current_request.temperature.is_none()
-                {
-                    tracing::warn!(
-                        provider = %provider_name,
-                        model = %current_request.model,
-                        "Upstream requires temperature; retrying with configured value"
-                    );
-                    current_request.temperature = Some(temperature);
-                    continue;
+            if response.status().is_success() {
+                let mut chunk_stream = sse_bytes_to_chunks(response, options.count_tokens);
+                while let Some(chunk) = chunk_stream.next().await {
+                    if tx.send(chunk).await.is_err() {
+                        break;
+                    }
                 }
-
-                let _ = tx
-                    .send(Err(StreamError::Provider(format!("{}: {}", status, error))))
-                    .await;
                 return;
             }
+
+            let status = response.status();
+            let error = match response.text().await {
+                Ok(e) => e,
+                Err(_) => format!("HTTP error: {}", status),
+            };
+
+            let _ = tx
+                .send(Err(StreamError::Provider(format!("{}: {}", status, error))))
+                .await;
         });
 
         // Convert channel receiver to stream
@@ -3228,7 +3119,6 @@ mod tests {
                     content: MessageContent::Text("hello".to_string()),
                 },
             ],
-            temperature: Some(0.4),
             max_tokens: None,
             stream: Some(false),
             tools: None,
@@ -3242,229 +3132,7 @@ mod tests {
         // tools/tool_choice should be omitted when None
         assert!(!json.contains("tools"));
         assert!(!json.contains("tool_choice"));
-    }
-
-    #[test]
-    fn api_chat_request_omits_temperature_when_none() {
-        let req = ApiChatRequest {
-            model: "gpt-5.5".to_string(),
-            messages: vec![Message {
-                role: "user".to_string(),
-                content: MessageContent::Text("hi".to_string()),
-            }],
-            temperature: None,
-            max_tokens: None,
-            stream: Some(false),
-            tools: None,
-            tool_choice: None,
-            cache: None,
-        };
-        let json = serde_json::to_string(&req).unwrap();
-        assert!(
-            !json.contains("temperature"),
-            "temperature key must be absent when None: {json}"
-        );
-    }
-
-    #[test]
-    fn api_chat_request_includes_temperature_when_set() {
-        let req = ApiChatRequest {
-            model: "gpt-4o".to_string(),
-            messages: vec![Message {
-                role: "user".to_string(),
-                content: MessageContent::Text("hi".to_string()),
-            }],
-            temperature: Some(0.7),
-            max_tokens: None,
-            stream: Some(false),
-            tools: None,
-            tool_choice: None,
-            cache: None,
-        };
-        let json = serde_json::to_string(&req).unwrap();
-        assert!(json.contains("\"temperature\":0.7"), "got: {json}");
-    }
-
-    #[test]
-    fn native_chat_request_omits_temperature_when_none() {
-        let req = NativeChatRequest {
-            model: "claude-opus-4-7".to_string(),
-            messages: vec![NativeMessage {
-                role: "user".to_string(),
-                content: Some(MessageContent::Text("hi".to_string())),
-                tool_call_id: None,
-                tool_calls: None,
-                reasoning_content: None,
-            }],
-            temperature: None,
-            max_tokens: None,
-            stream: Some(false),
-            tools: None,
-            tool_choice: None,
-            cache: None,
-        };
-        let json = serde_json::to_string(&req).unwrap();
-        assert!(
-            !json.contains("temperature"),
-            "temperature key must be absent when None: {json}"
-        );
-    }
-
-    #[test]
-    fn native_chat_request_includes_temperature_when_set() {
-        let req = NativeChatRequest {
-            model: "gpt-4o".to_string(),
-            messages: vec![NativeMessage {
-                role: "user".to_string(),
-                content: Some(MessageContent::Text("hi".to_string())),
-                tool_call_id: None,
-                tool_calls: None,
-                reasoning_content: None,
-            }],
-            temperature: Some(0.9),
-            max_tokens: None,
-            stream: Some(false),
-            tools: None,
-            tool_choice: None,
-            cache: None,
-        };
-        let json = serde_json::to_string(&req).unwrap();
-        assert!(json.contains("\"temperature\":0.9"), "got: {json}");
-    }
-
-    #[test]
-    fn is_temperature_required_error_matches_required_phrasings() {
-        use reqwest::StatusCode;
-        let cases = [
-            "temperature is required",
-            "Missing required field: temperature",
-            "temperature must be provided",
-            "temperature must be set",
-        ];
-        for body in cases {
-            assert!(
-                OpenAiCompatibleProvider::is_temperature_required_error(
-                    StatusCode::BAD_REQUEST,
-                    body,
-                ),
-                "expected true for: {body}"
-            );
-        }
-    }
-
-    #[test]
-    fn is_temperature_required_error_rejects_unsupported_phrasings() {
-        use reqwest::StatusCode;
-        let opposite_cases = [
-            // The two real-world error bodies the user reported — these mean
-            // the model REFUSES custom temperature, so we must NOT retry with one.
-            "'temperature' does not support 0.7 with this model. Only the default (1) value is supported",
-            "`temperature` is deprecated for this model",
-            // A legitimate range error — also not a "required" signal.
-            "temperature must be between 0 and 2",
-        ];
-        for body in opposite_cases {
-            assert!(
-                !OpenAiCompatibleProvider::is_temperature_required_error(
-                    StatusCode::BAD_REQUEST,
-                    body,
-                ),
-                "expected false for: {body}"
-            );
-        }
-    }
-
-    #[test]
-    fn is_temperature_required_error_ignores_non_400_statuses() {
-        use reqwest::StatusCode;
-        assert!(!OpenAiCompatibleProvider::is_temperature_required_error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "temperature is required",
-        ));
-        assert!(!OpenAiCompatibleProvider::is_temperature_required_error(
-            StatusCode::BAD_REQUEST,
-            "some unrelated 400 error",
-        ));
-    }
-
-    #[tokio::test]
-    async fn chat_with_history_retries_once_with_temperature_on_upstream_demand() {
-        #[derive(Clone, Default)]
-        struct RetryState {
-            calls: Arc<Mutex<Vec<Value>>>,
-        }
-
-        async fn endpoint(
-            State(state): State<RetryState>,
-            Json(payload): Json<Value>,
-        ) -> (StatusCode, Json<Value>) {
-            let mut calls = state.calls.lock().await;
-            calls.push(payload.clone());
-            let has_temperature = payload.get("temperature").is_some();
-            drop(calls);
-
-            if !has_temperature {
-                (
-                    StatusCode::BAD_REQUEST,
-                    Json(serde_json::json!({
-                        "error": { "message": "temperature is required" }
-                    })),
-                )
-            } else {
-                (
-                    StatusCode::OK,
-                    Json(serde_json::json!({
-                        "choices": [{ "message": { "content": "ok" } }]
-                    })),
-                )
-            }
-        }
-
-        let state = RetryState::default();
-        let app = Router::new()
-            .route("/chat/completions", post(endpoint))
-            .with_state(state.clone());
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-            .await
-            .expect("bind test server");
-        let addr = listener.local_addr().expect("server local addr");
-        let server = tokio::spawn(async move {
-            axum::serve(listener, app).await.expect("serve test app");
-        });
-
-        let provider = OpenAiCompatibleProvider::new(
-            "test",
-            &format!("http://{}", addr),
-            Some("test-key"),
-            AuthStyle::Bearer,
-        );
-
-        let messages = vec![ChatMessage::user("hi")];
-        let text = provider
-            .chat_with_history(&messages, "legacy-model", 0.42)
-            .await
-            .expect("retry path should succeed");
-        assert_eq!(text, "ok");
-
-        let calls = state.calls.lock().await.clone();
-        assert_eq!(calls.len(), 2, "expected one retry after the initial 400");
-        assert!(
-            calls[0].get("temperature").is_none(),
-            "first call must omit temperature: {}",
-            calls[0]
-        );
-        assert_eq!(
-            calls[1]
-                .get("temperature")
-                .and_then(|v| v.as_f64())
-                .unwrap(),
-            0.42,
-            "retry must carry the configured temperature: {}",
-            calls[1]
-        );
-
-        server.abort();
-        let _ = server.await;
+        assert!(!json.contains("temperature"));
     }
 
     #[test]
@@ -4913,7 +4581,6 @@ mod tests {
                 role: "user".to_string(),
                 content: MessageContent::Text("What is the weather?".to_string()),
             }],
-            temperature: Some(0.7),
             max_tokens: None,
             stream: Some(false),
             tools: Some(tools),

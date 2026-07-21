@@ -885,26 +885,6 @@ pub(crate) fn is_native_tool_schema_rejection(status: reqwest::StatusCode, error
     is_native_tool_schema_rejection_status(status) && has_native_tool_schema_rejection_hint(error)
 }
 
-/// Detects upstream 400 responses indicating the model requires an explicit
-/// `temperature` value in the request body. AgentZero omits `temperature` by
-/// default for forward compatibility with models that reject custom values
-/// (gpt-5, o-series, newer Claude/Gemini models). When a legacy provider
-/// instead demands temperature, this classifier triggers a one-shot retry
-/// with the caller-configured value.
-pub(crate) fn is_temperature_required_error(status: reqwest::StatusCode, error: &str) -> bool {
-    if status != reqwest::StatusCode::BAD_REQUEST {
-        return false;
-    }
-    let body = error.to_lowercase();
-    if !body.contains("temperature") {
-        return false;
-    }
-    body.contains("required")
-        || body.contains("must be provided")
-        || body.contains("missing")
-        || body.contains("must be set")
-}
-
 /// Build a sanitized provider error from a failed HTTP response.
 pub async fn api_error(provider: &str, response: reqwest::Response) -> anyhow::Error {
     let status = response.status();
@@ -3370,53 +3350,6 @@ mod tests {
         ));
         assert!(!has_native_tool_schema_rejection_hint(
             "available tools: shell, weather, browser"
-        ));
-    }
-
-    // ── Temperature requirement detection ───────────────────────────────
-
-    #[test]
-    fn temperature_required_error_matches_required_phrasings() {
-        let cases = [
-            "temperature is required",
-            "Missing required field: temperature",
-            "temperature must be provided",
-            "temperature must be set",
-        ];
-        for case in cases {
-            assert!(
-                is_temperature_required_error(reqwest::StatusCode::BAD_REQUEST, case),
-                "expected required-signal for: {case}"
-            );
-        }
-    }
-
-    #[test]
-    fn temperature_required_error_rejects_unsupported_phrasings() {
-        // These indicate the model REFUSES custom temperature, so we must
-        // NOT treat them as a signal to retry with an explicit value.
-        let cases = [
-            "'temperature' does not support 0.7 with this model. Only the default (1) value is supported",
-            "`temperature` is deprecated for this model",
-            "temperature must be between 0 and 2",
-        ];
-        for case in cases {
-            assert!(
-                !is_temperature_required_error(reqwest::StatusCode::BAD_REQUEST, case),
-                "should not treat as required-signal: {case}"
-            );
-        }
-    }
-
-    #[test]
-    fn temperature_required_error_ignores_non_400_statuses() {
-        assert!(!is_temperature_required_error(
-            reqwest::StatusCode::INTERNAL_SERVER_ERROR,
-            "temperature is required"
-        ));
-        assert!(!is_temperature_required_error(
-            reqwest::StatusCode::UNAUTHORIZED,
-            "temperature is required"
         ));
     }
 
