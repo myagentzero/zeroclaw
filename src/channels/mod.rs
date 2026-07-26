@@ -3652,16 +3652,23 @@ If this input is legitimate, rephrase the request and avoid instruction-override
     if runtime_defaults.auto_save_memory
         && msg.content.chars().count() >= AUTOSAVE_MIN_MESSAGE_CHARS
     {
+        // Spawned so a slow/failing embedding provider (see
+        // `SqliteMemory::store`) can never delay reply delivery below —
+        // memory persistence is not on the user-facing latency path.
         let autosave_key = conversation_memory_key(&msg);
-        let _ = ctx
-            .memory
-            .store(
-                &autosave_key,
-                &msg.content,
-                crate::memory::MemoryCategory::Conversation,
-                Some(&history_key),
-            )
-            .await;
+        let autosave_memory = Arc::clone(&ctx.memory);
+        let autosave_content = msg.content.clone();
+        let autosave_history_key = history_key.clone();
+        tokio::spawn(async move {
+            let _ = autosave_memory
+                .store(
+                    &autosave_key,
+                    &autosave_content,
+                    crate::memory::MemoryCategory::Conversation,
+                    Some(&autosave_history_key),
+                )
+                .await;
+        });
     }
 
     println!("  ⏳ Processing message...");
@@ -4119,16 +4126,23 @@ If this input is legitimate, rephrase the request and avoid instruction-override
             if runtime_defaults.auto_save_memory
                 && delivered_response.chars().count() >= AUTOSAVE_MIN_MESSAGE_CHARS
             {
+                // Spawned so a slow/failing embedding provider (see
+                // `SqliteMemory::store`) can never delay or drop delivery of
+                // the reply below — memory persistence is not on the
+                // user-facing latency path.
                 let assistant_key = assistant_memory_key(&msg);
-                let _ = ctx
-                    .memory
-                    .store(
-                        &assistant_key,
-                        &delivered_response,
-                        crate::memory::MemoryCategory::Conversation,
-                        None,
-                    )
-                    .await;
+                let autosave_memory = Arc::clone(&ctx.memory);
+                let autosave_content = delivered_response.clone();
+                tokio::spawn(async move {
+                    let _ = autosave_memory
+                        .store(
+                            &assistant_key,
+                            &autosave_content,
+                            crate::memory::MemoryCategory::Conversation,
+                            None,
+                        )
+                        .await;
+                });
             }
             println!(
                 "  🤖 Reply ({}ms): {}",

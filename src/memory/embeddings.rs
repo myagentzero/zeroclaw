@@ -60,7 +60,11 @@ impl OpenAiEmbedding {
     }
 
     fn http_client(&self) -> reqwest::Client {
-        crate::config::build_runtime_proxy_client("memory.embeddings")
+        // Bounded so a slow/unreachable embedding provider fails fast instead
+        // of hanging the caller — `SqliteMemory::store` awaits this inline
+        // in the message-delivery path and only degrades gracefully (NULL
+        // vector) once the error actually surfaces.
+        crate::config::build_runtime_proxy_client_with_timeouts("memory.embeddings", 30, 10)
     }
 
     fn has_explicit_api_path(&self) -> bool {
