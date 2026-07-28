@@ -149,7 +149,7 @@ export const CONFIG_SECTIONS: SectionDef[] = [
   // ── Autonomy ──────────────────────────────────────────────────────
   {
     path: 'autonomy',
-    category: 'advanced',
+    category: 'runtime',
     title: 'Autonomy',
     description: 'Agent autonomy level, action limits, and tool permissions',
     icon: ShieldCheck,
@@ -392,12 +392,13 @@ export const CONFIG_SECTIONS: SectionDef[] = [
   // ── Reliability ───────────────────────────────────────────────────
   {
     path: 'reliability',
-    category: 'advanced',
+    category: 'general',
     title: 'Reliability',
     description: 'Provider failover chain, retry, and backoff settings. For per-provider API keys (fallback_api_keys), per-model fallback chains (model_fallbacks), and per-provider model remaps (provider_model_overrides), use the Raw TOML editor.',
     icon: RefreshCw,
     defaultCollapsed: true,
     fields: [
+      { key: 'fallback_enabled', label: 'Fallback Enabled', type: 'toggle', defaultValue: false, description: 'Master switch for the fallback provider chain. Off by default — enable deliberately once Fallback Providers below is configured. When off, only the primary provider is used (still retried); the fallback list is kept but ignored' },
       { key: 'fallback_providers', label: 'Fallback Providers', type: 'tag-list', tagPlaceholder: 'e.g. anthropic, openai, ollama', description: 'Provider chain tried in order when the primary fails' },
       { key: 'provider_retries', label: 'Provider Retries', type: 'number', min: 0, defaultValue: 2, description: 'Retries per provider before failing over to the next. Default: 2' },
       { key: 'provider_backoff_ms', label: 'Backoff (ms)', type: 'number', min: 0, defaultValue: 500, description: 'Base backoff between retries (doubles each attempt, max 10s). Default: 500' },
@@ -530,7 +531,7 @@ export const CONFIG_SECTIONS: SectionDef[] = [
   // ── Pipeline ─────────────────────────────────────────────────────
   {
     path: 'pipeline',
-    category: 'skills',
+    category: 'tools',
     title: 'Pipeline',
     description: 'Multi-step tool chaining via execute_pipeline',
     icon: Play,
@@ -584,7 +585,7 @@ export const CONFIG_SECTIONS: SectionDef[] = [
   // ── Cron ──────────────────────────────────────────────────────────
   {
     path: 'cron',
-    category: 'advanced',
+    category: 'runtime',
     title: 'Cron',
     description: 'Cron job settings',
     icon: Timer,
@@ -1063,7 +1064,7 @@ export const CONFIG_SECTIONS: SectionDef[] = [
   // ── Composio ──────────────────────────────────────────────────────
   {
     path: 'composio',
-    category: 'advanced',
+    category: 'tools',
     title: 'Composio',
     description: 'Composio integration',
     icon: Puzzle,
@@ -1112,7 +1113,7 @@ export const CONFIG_SECTIONS: SectionDef[] = [
   // ── Hardware ──────────────────────────────────────────────────────
   {
     path: 'hardware',
-    category: 'advanced',
+    category: 'tools',
     title: 'Hardware',
     description: 'Hardware integration settings',
     icon: Cpu,
@@ -1136,7 +1137,7 @@ export const CONFIG_SECTIONS: SectionDef[] = [
   // ── Peripherals ───────────────────────────────────────────────────
   {
     path: 'peripherals',
-    category: 'advanced',
+    category: 'tools',
     title: 'Peripherals',
     description: 'Hardware peripheral boards',
     icon: Cpu,
@@ -1151,7 +1152,7 @@ export const CONFIG_SECTIONS: SectionDef[] = [
   // ── MCP ───────────────────────────────────────────────────────────
   {
     path: 'mcp',
-    category: 'advanced',
+    category: 'tools',
     title: 'MCP',
     description: 'Model Context Protocol servers',
     icon: Plug,

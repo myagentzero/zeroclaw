@@ -173,6 +173,27 @@ pub struct ChatRequest<'a> {
     pub tools: Option<&'a [ToolSpec]>,
 }
 
+/// A [`ChatResponse`] bundled with metadata about which provider/model
+/// actually served the request.
+///
+/// Wrapper providers that implement fallback or routing (`ReliableProvider`,
+/// `RouterProvider`) override [`Provider::chat_routed`] to populate
+/// `served_by_provider`/`served_by_model` so callers (e.g. the agent loop's
+/// observability/cost-tracking hooks) can attribute usage to the provider
+/// that actually handled the request, rather than the one the caller
+/// nominally addressed.
+#[derive(Debug, Clone)]
+pub struct RoutedChatResponse {
+    pub response: ChatResponse,
+    /// Name of the provider that actually served the request (e.g. the
+    /// registered name of a fallback provider). `None` when the provider
+    /// does not participate in fallback/routing.
+    pub served_by_provider: Option<String>,
+    /// Model actually sent to the serving provider (may differ from the
+    /// requested model due to model-level fallback/remap).
+    pub served_by_model: Option<String>,
+}
+
 /// A tool result to feed back to the LLM.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolResultMessage {
@@ -425,6 +446,28 @@ pub trait Provider: Send + Sync {
             quota_metadata: None,
             stop_reason: None,
             raw_stop_reason: None,
+        })
+    }
+
+    /// Like [`chat`](Provider::chat), but also reports which underlying
+    /// provider/model actually served the request.
+    ///
+    /// Wrapper providers that implement fallback or routing
+    /// (`ReliableProvider`, `RouterProvider`) override this to surface the
+    /// real serving provider. The default implementation just delegates to
+    /// `chat` and reports `None` for both fields, since a plain provider
+    /// always serves the request itself.
+    async fn chat_routed(
+        &self,
+        request: ChatRequest<'_>,
+        model: &str,
+        temperature: f64,
+    ) -> anyhow::Result<RoutedChatResponse> {
+        let response = self.chat(request, model, temperature).await?;
+        Ok(RoutedChatResponse {
+            response,
+            served_by_provider: None,
+            served_by_model: None,
         })
     }
 

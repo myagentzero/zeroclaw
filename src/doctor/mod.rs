@@ -724,7 +724,7 @@ async fn check_provider_health(config: &Config, items: &mut Vec<DiagItem>) {
 async fn check_fallback_provider_health(config: &Config, items: &mut Vec<DiagItem>) {
     let cat = "providers";
 
-    if config.reliability.fallback_providers.is_empty() {
+    if !config.reliability.fallback_enabled || config.reliability.fallback_providers.is_empty() {
         return;
     }
 
@@ -1477,6 +1477,7 @@ mod tests {
     async fn fallback_provider_health_check_reports_invalid_fallback() {
         let mut config = Config::default();
         config.default_provider = Some("openrouter".into());
+        config.reliability.fallback_enabled = true;
         config.reliability.fallback_providers = vec!["totally-fake".into()];
         let mut items = Vec::new();
         check_fallback_provider_health(&config, &mut items).await;
@@ -1493,7 +1494,26 @@ mod tests {
     async fn fallback_provider_health_check_skips_entry_matching_primary() {
         let mut config = Config::default();
         config.default_provider = Some("openrouter".into());
+        config.reliability.fallback_enabled = true;
         config.reliability.fallback_providers = vec!["openrouter".into()];
+        let mut items = Vec::new();
+        check_fallback_provider_health(&config, &mut items).await;
+
+        assert!(items.is_empty());
+    }
+
+    /// `fallback_enabled = false` (the default) must skip the health check
+    /// entirely, even when `fallback_providers` is populated, since the
+    /// fallback chain isn't actually in use.
+    #[tokio::test]
+    async fn fallback_provider_health_check_skips_when_disabled() {
+        let mut config = Config::default();
+        config.default_provider = Some("openrouter".into());
+        assert!(
+            !config.reliability.fallback_enabled,
+            "fallback_enabled should default to false"
+        );
+        config.reliability.fallback_providers = vec!["totally-fake".into()];
         let mut items = Vec::new();
         check_fallback_provider_health(&config, &mut items).await;
 

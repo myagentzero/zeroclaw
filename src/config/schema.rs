@@ -14,9 +14,7 @@ use tokio::fs::File;
 use tokio::fs::{self, OpenOptions};
 use tokio::io::AsyncWriteExt;
 
-/// Default fallback model when none is configured. Uses a format compatible with
-/// OpenRouter and other multi-provider gateways. For Anthropic direct API, this
-/// model ID will be normalized by the provider layer.
+/// Default fallback model when none is configured.
 pub const DEFAULT_MODEL_FALLBACK: &str = "anthropic/claude-sonnet-4.6";
 
 fn canonical_provider_for_model_defaults(provider_name: &str) -> String {
@@ -92,9 +90,6 @@ pub fn default_model_fallback_for_provider(provider_name: Option<&str>) -> &'sta
 }
 
 /// Resolves the model ID used by runtime components.
-/// Preference order:
-/// 1) Explicit configured model (if non-empty)
-/// 2) Provider-aware fallback
 pub fn resolve_default_model_id(
     default_model: Option<&str>,
     provider_name: Option<&str>,
@@ -148,8 +143,7 @@ const DEFAULT_MODEL_NAME: &str = "anthropic/claude-sonnet-4.6";
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 pub enum ProviderApiMode {
-    /// Default behavior: `/chat/completions` first, optional `/responses`
-    /// fallback when supported.
+    /// Default behavior: `/chat/completions` first, optional `/responses` fallback when supported.
     OpenAiChatCompletions,
     /// Responses-first behavior: call `/responses` directly.
     OpenAiResponses,
@@ -169,8 +163,6 @@ impl ProviderApiMode {
 }
 
 /// Top-level AgentZero configuration, loaded from `config.toml`.
-///
-/// Resolution order: `AGENTZERO_WORKSPACE` env → `active_workspace.toml` marker → `~/.agentzero/config.toml`.
 #[derive(Clone, Serialize, Deserialize, JsonSchema)]
 pub struct Config {
     /// Workspace directory - computed from home, not serialized
@@ -182,8 +174,7 @@ pub struct Config {
     /// Runtime-only: skip auto-saving the input message to Conversation memory (set by cron scheduler)
     #[serde(skip)]
     pub skip_input_autosave: bool,
-    /// API key for the selected provider. Always overridden by `AGENTZERO_API_KEY` env var.
-    /// `API_KEY` env var is only used as fallback when no config key is set.
+    /// API key for the selected provider.
     pub api_key: Option<String>,
     /// Base URL override for provider API (e.g. "http://10.0.0.1:11434" for remote Ollama)
     pub api_url: Option<String>,
@@ -338,7 +329,6 @@ pub struct Config {
     pub cost: CostConfig,
 
     /// Economic agent survival tracking (`[economic]`).
-    /// Tracks balance, token costs, work income, and survival status.
     #[serde(default)]
     pub economic: EconomicConfig,
 
@@ -379,9 +369,6 @@ pub struct Config {
     pub mcp: McpConfig,
 
     /// Vision support override for the active provider/model.
-    /// - `None` (default): use provider's built-in default
-    /// - `Some(true)`: force vision support on (e.g. Ollama running llava)
-    /// - `Some(false)`: force vision support off
     #[serde(default)]
     pub model_support_vision: Option<bool>,
 
@@ -390,7 +377,6 @@ pub struct Config {
     pub notion: NotionConfig,
 
     /// Atlassian Cloud authentication (`[atlassian]`).
-    /// Shared credentials for Jira and Confluence tools.
     #[serde(default)]
     pub atlassian: AtlassianConfig,
 
@@ -416,15 +402,8 @@ pub struct ModelProviderConfig {
     /// Optional base URL for OpenAI-compatible endpoints.
     #[serde(default)]
     pub base_url: Option<String>,
-    /// Optional custom authentication header for `custom:` providers
-    /// (for example `api-key` for Azure OpenAI).
-    ///
-    /// Contract:
-    /// - Default/omitted (`None`): uses the standard `Authorization: Bearer <token>` header.
-    /// - Compatibility: this key is additive and optional; older runtimes that do not support it
-    ///   ignore the field while continuing to use Bearer auth behavior.
-    /// - Rollback/migration: remove `auth_header` to return to Bearer-only auth if operators
-    ///   need to downgrade or revert custom-header behavior.
+    /// Optional custom authentication header for `custom:` providers (for example `api-key` for
+    /// Azure OpenAI).
     #[serde(default)]
     pub auth_header: Option<String>,
     /// Provider protocol variant ("responses" or "chat_completions").
@@ -449,21 +428,9 @@ pub struct ProviderConfig {
     #[serde(default)]
     pub reasoning_level: Option<String>,
     /// Optional transport override for providers that support multiple transports.
-    /// Supported values: "auto", "websocket", "sse".
-    ///
-    /// Resolution order:
-    /// 1) `model_routes[].transport` (route-specific)
-    /// 2) env overrides (`PROVIDER_TRANSPORT`, `AGENTZERO_PROVIDER_TRANSPORT`, `AGENTZERO_CODEX_TRANSPORT`)
-    /// 3) `provider.transport`
-    /// 4) runtime default (`auto`, WebSocket-first with SSE fallback for OpenAI Codex)
-    ///
-    /// Note: env overrides replace configured `provider.transport` when set.
-    ///
-    /// Existing configs that omit `provider.transport` remain valid and fall back to defaults.
     #[serde(default)]
     pub transport: Option<String>,
     /// LiteLLM dynamic cache controls applied to all outgoing requests.
-    /// Only relevant when the provider targets a LiteLLM proxy with caching enabled.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub litellm_cache: Option<crate::providers::compatible::LiteLlmCacheConfig>,
     /// Custom User-Agent header sent with provider requests (custom: providers only).
@@ -669,8 +636,6 @@ pub struct TranscriptionConfig {
     #[serde(default)]
     pub enabled: bool,
     /// API key used for transcription requests.
-    ///
-    /// If unset, runtime falls back to `GROQ_API_KEY` for backward compatibility.
     #[serde(default)]
     pub api_key: Option<String>,
     /// Whisper API endpoint URL.
@@ -765,10 +730,6 @@ fn default_agents_ipc_staleness_secs() -> u64 {
 }
 
 /// Inter-process agent communication configuration (`[agents_ipc]` section).
-///
-/// When enabled, registers IPC tools that let independent AgentZero processes
-/// on the same host discover each other and exchange messages via a shared
-/// SQLite database. Disabled by default (zero overhead when off).
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct AgentsIpcConfig {
     /// Enable inter-process agent communication tools.
@@ -894,9 +855,6 @@ pub enum AgentLoadBalanceStrategy {
 }
 
 /// Delegate coordination runtime configuration (`[coordination]` section).
-///
-/// Controls typed delegate message-bus integration used by `delegate` and
-/// `delegate_coordination_status` tools.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct CoordinationConfig {
     /// Enable delegate coordination tracing/runtime bus integration.
@@ -933,8 +891,6 @@ impl Default for CoordinationConfig {
 }
 
 /// Agent-team orchestration controls (`[agent.teams]` section).
-///
-/// This governs synchronous delegation (`delegate`) and team-wide coordination.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct AgentTeamsConfig {
     /// Enable agent-team delegation tools.
@@ -979,9 +935,6 @@ impl Default for AgentTeamsConfig {
 }
 
 /// Background sub-agent orchestration controls (`[agent.subagents]` section).
-///
-/// This governs asynchronous delegation (`subagent_spawn`, `subagent_list`,
-/// `subagent_manage`).
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct SubAgentsConfig {
     /// Enable background sub-agent tools.
@@ -1009,7 +962,6 @@ pub struct SubAgentsConfig {
     #[serde(default = "default_subagents_recent_failure_penalty")]
     pub recent_failure_penalty: usize,
     /// When at concurrency limit, wait this long for a slot before failing.
-    /// Set to `0` for immediate fail-fast behavior.
     #[serde(default = "default_subagents_queue_wait_ms")]
     pub queue_wait_ms: usize,
     /// Poll interval while waiting for a concurrency slot.
@@ -1042,8 +994,7 @@ pub struct AgentConfig {
     pub light_context: bool,
     #[serde(default)]
     pub session: AgentSessionConfig,
-    /// Maximum tool-call loop turns per user message. Default: `20`.
-    /// Setting to `0` falls back to the safe default of `20`.
+    /// Maximum tool-call loop turns per user message.
     #[serde(default = "default_agent_max_tool_iterations")]
     pub max_tool_iterations: usize,
     /// Maximum conversation history messages retained per session. Default: `50`.
@@ -1056,11 +1007,9 @@ pub struct AgentConfig {
     #[serde(default = "default_agent_tool_dispatcher")]
     pub tool_dispatcher: String,
     /// Optional allowlist for primary-agent tool visibility.
-    /// When non-empty, only listed tools are exposed to the primary agent.
     #[serde(default)]
     pub allowed_tools: Vec<String>,
     /// Optional denylist for primary-agent tool visibility.
-    /// Applied after `allowed_tools`.
     #[serde(default)]
     pub denied_tools: Vec<String>,
     /// Agent-team runtime controls for synchronous delegation.
@@ -1070,41 +1019,24 @@ pub struct AgentConfig {
     #[serde(default)]
     pub subagents: SubAgentsConfig,
     /// Loop detection: no-progress repeat threshold.
-    /// Triggers when the same tool+args produces identical output this many times.
-    /// Set to `0` to disable. Default: `3`.
     #[serde(default = "default_loop_detection_no_progress_threshold")]
     pub loop_detection_no_progress_threshold: usize,
     /// Loop detection: ping-pong cycle threshold.
-    /// Detects A→B→A→B alternating patterns with no progress.
-    /// Value is number of full cycles (A-B = 1 cycle). Set to `0` to disable. Default: `2`.
     #[serde(default = "default_loop_detection_ping_pong_cycles")]
     pub loop_detection_ping_pong_cycles: usize,
     /// Loop detection: consecutive failure streak threshold.
-    /// Triggers when the same tool fails this many times in a row.
-    /// Set to `0` to disable. Default: `3`.
     #[serde(default = "default_loop_detection_failure_streak")]
     pub loop_detection_failure_streak: usize,
     /// Safety heartbeat injection interval inside `run_tool_call_loop`.
-    /// Injects a security-constraint reminder every N tool iterations.
-    /// Set to `0` to disable. Default: `5`.
-    /// Compatibility/rollback: omit/remove this key to use default (`5`), or set
-    /// to `0` for explicit disable.
     #[serde(default = "default_safety_heartbeat_interval")]
     pub safety_heartbeat_interval: usize,
     /// Safety heartbeat injection interval for interactive sessions.
-    /// Injects a security-constraint reminder every N conversation turns.
-    /// Set to `0` to disable. Default: `10`.
-    /// Compatibility/rollback: omit/remove this key to use default (`10`), or
-    /// set to `0` for explicit disable.
     #[serde(default = "default_safety_heartbeat_turn_interval")]
     pub safety_heartbeat_turn_interval: usize,
     /// Token-budget context compression (`[agent.context_compression]`).
     #[serde(default)]
     pub context_compression: ContextCompressionConfig,
-    /// Deterministic history pruning (`[agent.history_pruner]`). Runs before the
-    /// context compressor: collapses tool exchanges, enforces a backstop token
-    /// budget, and removes orphaned tool messages. An always-on orphan sweep
-    /// also runs just before every model call regardless of `enabled`.
+    /// Deterministic history pruning (`[agent.history_pruner]`).
     #[serde(default)]
     pub history_pruner: HistoryPrunerConfig,
 }
@@ -1128,24 +1060,19 @@ pub enum AgentSessionStrategy {
 /// Session persistence configuration (`[agent.session]` section).
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct AgentSessionConfig {
-    /// Session backend to use. Options: "memory", "sqlite", "none".
-    /// Default: "none" (no persistence).
-    /// Set to "none" to disable session persistence entirely.
+    /// Session backend to use.
     #[serde(default = "default_agent_session_backend")]
     pub backend: AgentSessionBackend,
 
-    /// Strategy for resolving session IDs. Options: "per-sender", "per-channel", "main".
-    /// Default: "per-sender" (each user gets a unique session per channel).
+    /// Strategy for resolving session IDs.
     #[serde(default = "default_agent_session_strategy")]
     pub strategy: AgentSessionStrategy,
 
     /// Time-to-live for sessions in seconds.
-    /// Default: 3600 (1 hour).
     #[serde(default = "default_agent_session_ttl_seconds")]
     pub ttl_seconds: u64,
 
     /// Maximum number of messages to retain per session.
-    /// Default: 50.
     #[serde(default = "default_agent_session_max_messages")]
     pub max_messages: usize,
 }
@@ -1256,25 +1183,18 @@ fn parse_skills_prompt_injection_mode(raw: &str) -> Option<SkillsPromptInjection
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
 pub struct SkillsConfig {
     /// Enable loading and syncing the community open-skills repository.
-    /// Default: `false` (opt-in).
     #[serde(default)]
     pub open_skills_enabled: bool,
     /// Optional path to a local open-skills repository.
-    /// If unset, defaults to `$HOME/open-skills` when enabled.
     #[serde(default)]
     pub open_skills_dir: Option<String>,
     /// Optional allowlist of canonical directory roots for workspace skill symlink targets.
-    /// Symlinked workspace skills are rejected unless their resolved targets are under one
-    /// of these roots. Accepts absolute paths and `~/` home-relative paths.
     #[serde(default)]
     pub trusted_skill_roots: Vec<String>,
     /// Allow script-like files in skills (`.sh`, `.bash`, `.ps1`, shebang shell files).
-    /// Default: `false` (secure by default).
     #[serde(default)]
     pub allow_scripts: bool,
     /// Controls how skills are injected into the system prompt.
-    /// `compact` (default) keeps context small and loads skills on demand.
-    /// `full` preserves legacy behavior as an opt-in.
     #[serde(default)]
     pub prompt_injection_mode: SkillsPromptInjectionMode,
     /// Autonomous skill creation from successful multi-step task executions.
@@ -1290,13 +1210,10 @@ pub struct SkillsConfig {
 #[serde(default)]
 pub struct SkillCreationConfig {
     /// Enable automatic skill creation after successful multi-step tasks.
-    /// Default: `false`.
     pub enabled: bool,
     /// Maximum number of auto-generated skills to keep.
-    /// When exceeded, the oldest auto-generated skill is removed (LRU eviction).
     pub max_skills: usize,
     /// Embedding similarity threshold for deduplication.
-    /// Skills with descriptions more similar than this value are skipped.
     pub similarity_threshold: f64,
 }
 
@@ -1314,11 +1231,9 @@ impl Default for SkillCreationConfig {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct SkillImprovementConfig {
     /// Enable automatic skill improvement after successful skill usage.
-    /// Default: `true`.
     #[serde(default = "default_true")]
     pub enabled: bool,
     /// Minimum interval (in seconds) between improvements for the same skill.
-    /// Default: `3600` (1 hour).
     #[serde(default = "default_skill_improvement_cooldown")]
     pub cooldown_secs: u64,
 }
@@ -1340,15 +1255,12 @@ impl Default for SkillImprovementConfig {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct PipelineConfig {
     /// Enable the `execute_pipeline` meta-tool.
-    /// Default: `false`.
     #[serde(default)]
     pub enabled: bool,
     /// Maximum number of steps allowed in a single pipeline invocation.
-    /// Default: `20`.
     #[serde(default = "default_pipeline_max_steps")]
     pub max_steps: usize,
-    /// Tools allowed in pipeline steps. Steps referencing tools not on this
-    /// list are rejected before execution.
+    /// Tools allowed in pipeline steps.
     #[serde(default)]
     pub allowed_tools: Vec<String>,
 }
@@ -1411,19 +1323,13 @@ impl Default for MultimodalConfig {
 // ── Context compression (`[agent.context_compression]`) ─────────
 
 /// Token-budget context-compression configuration.
-///
-/// Drives the [`ContextCompressor`](crate::agent::context_compressor::ContextCompressor),
-/// which summarizes the middle of a conversation once the estimated token
-/// count crosses `context_window * threshold_ratio`, while protecting the
-/// first and last few messages from being summarized away.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ContextCompressionConfig {
     /// Master switch. When `false`, the compressor is a no-op.
     #[serde(default = "default_context_compression_enabled")]
     pub enabled: bool,
-    /// Assumed model context window (tokens) used to compute the compression
-    /// threshold (`context_window * threshold_ratio`). Refined at runtime by
-    /// error-reactive probing in the channel overflow path.
+    /// Assumed model context window (tokens) used to compute the compression threshold
+    /// (`context_window * threshold_ratio`).
     #[serde(default = "default_context_compression_context_window")]
     pub context_window: usize,
     /// Fraction of the context window at which compression triggers.
@@ -1447,12 +1353,10 @@ pub struct ContextCompressionConfig {
     /// Safety timeout (seconds) for the summarizer LLM call.
     #[serde(default = "default_context_compression_timeout_secs")]
     pub timeout_secs: u64,
-    /// Optional dedicated summarization model. When `None`, the main model
-    /// is reused (and media markers are preserved for vision-capable models).
+    /// Optional dedicated summarization model.
     #[serde(default)]
     pub summary_model: Option<String>,
-    /// Identifier preservation policy. `"strict"` instructs the summarizer to
-    /// preserve all identifiers verbatim.
+    /// Identifier preservation policy.
     #[serde(default = "default_context_compression_identifier_policy")]
     pub identifier_policy: String,
     /// Fast-trim threshold: tool results longer than this many characters are
@@ -1531,27 +1435,15 @@ impl Default for ContextCompressionConfig {
 // ── History pruning (`[agent.history_pruner]`) ──────────────────
 
 /// Deterministic, no-LLM history pruning configuration.
-///
-/// Drives [`prune_history`](crate::agent::prune_history), which runs before the
-/// [`ContextCompressor`](crate::agent::context_compressor::ContextCompressor):
-/// it collapses assistant+tool exchanges into summaries, enforces a backstop
-/// token budget by dropping the oldest tool groups atomically, and removes
-/// orphaned tool messages whose `assistant(tool_calls)` parent was trimmed away.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct HistoryPrunerConfig {
-    /// Master switch for `prune_history`. When `false`, collapse/budget pruning
-    /// is skipped. Note: the orphaned-tool-message safety sweep before each
-    /// model call runs regardless of this flag.
+    /// Master switch for `prune_history`.
     #[serde(default = "default_history_pruner_enabled")]
     pub enabled: bool,
-    /// Backstop token budget. Tool groups are dropped oldest-first until the
-    /// estimated token count fits. Kept high by default so the context
-    /// compressor owns threshold-based summarization and this is only a
-    /// safety net.
+    /// Backstop token budget.
     #[serde(default = "default_history_pruner_max_tokens")]
     pub max_tokens: usize,
-    /// Number of trailing (and all system) messages protected from collapse
-    /// and budget dropping.
+    /// Number of trailing (and all system) messages protected from collapse and budget dropping.
     #[serde(default = "default_history_pruner_keep_recent")]
     pub keep_recent: usize,
     /// Collapse `assistant + consecutive tool` groups into a compact
@@ -1590,16 +1482,12 @@ impl Default for HistoryPrunerConfig {
 // ── Identity (AIEOS / OpenClaw format) ──────────────────────────
 
 /// Identity format configuration (`[identity]` section).
-///
-/// Supports `"openclaw"` (default) or `"aieos"` identity documents.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct IdentityConfig {
     /// Identity format: "openclaw" (default) or "aieos"
     #[serde(default = "default_identity_format")]
     pub format: String,
     /// Additional workspace files injected for the OpenClaw identity format.
-    ///
-    /// Paths are resolved relative to the workspace root.
     #[serde(default)]
     pub extra_files: Vec<String>,
     /// Path to AIEOS JSON file (relative to workspace)
@@ -1824,8 +1712,6 @@ fn get_default_pricing() -> std::collections::HashMap<String, ModelPricing> {
 // ── Peripherals (hardware: STM32, RPi GPIO, etc.) ────────────────────────
 
 /// Peripheral board integration configuration (`[peripherals]` section).
-///
-/// Boards become agent tools when enabled.
 #[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
 pub struct PeripheralsConfig {
     /// Enable peripheral support (boards become agent tools)
@@ -1835,7 +1721,6 @@ pub struct PeripheralsConfig {
     #[serde(default)]
     pub boards: Vec<PeripheralBoardConfig>,
     /// Path to datasheet docs (relative to workspace) for RAG retrieval.
-    /// Place .md/.txt files named by board (e.g. nucleo-f401re.md, rpi-gpio.md).
     #[serde(default)]
     pub datasheet_dir: Option<String>,
 }
@@ -1887,9 +1772,6 @@ impl Default for EconomicTokenPricing {
 }
 
 /// Economic agent survival tracking configuration (`[economic]` section).
-///
-/// Implements the ClawWork economic model for AI agents, tracking
-/// balance, costs, income, and survival status.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct EconomicConfig {
     /// Enable economic tracking (default: false)
@@ -1955,8 +1837,6 @@ impl Default for PeripheralBoardConfig {
 // ── Gateway security ─────────────────────────────────────────────
 
 /// Gateway server configuration (`[gateway]` section).
-///
-/// Controls the HTTP gateway for webhook and pairing endpoints.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct GatewayConfig {
     /// Gateway port (default: 42617)
@@ -1984,7 +1864,6 @@ pub struct GatewayConfig {
     pub webhook_rate_limit_per_minute: u32,
 
     /// Trust proxy-forwarded client IP headers (`X-Forwarded-For`, `X-Real-IP`).
-    /// Disabled by default; enable only behind a trusted reverse proxy.
     #[serde(default)]
     pub trust_forwarded_headers: bool,
 
@@ -2017,12 +1896,10 @@ pub struct NodeControlConfig {
     pub enabled: bool,
 
     /// Optional extra shared token for node-control API calls.
-    /// When set, clients must send this value in `X-Node-Control-Token`.
     #[serde(default)]
     pub auth_token: Option<String>,
 
     /// Allowlist of remote node IDs for `node.describe`/`node.invoke`.
-    /// Empty means "no explicit allowlist" (accept all IDs).
     #[serde(default)]
     pub allowed_node_ids: Vec<String>,
 }
@@ -2082,8 +1959,6 @@ impl Default for GatewayConfig {
 // ── Composio (managed tool surface) ─────────────────────────────
 
 /// Composio managed OAuth tools integration (`[composio]` section).
-///
-/// Provides access to 1000+ OAuth-connected tools via the Composio platform.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ComposioConfig {
     /// Enable Composio integration for 1000+ OAuth tools
@@ -2130,8 +2005,6 @@ impl Default for SecretsConfig {
 // ── Browser (friendly-service browsing only) ───────────────────
 
 /// Computer-use sidecar configuration (`[browser.computer_use]` section).
-///
-/// Delegates OS-level mouse, keyboard, and screenshot actions to a local sidecar.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct BrowserComputerUseConfig {
     /// Sidecar endpoint for computer-use actions (OS-level mouse/keyboard/screenshot)
@@ -2180,8 +2053,6 @@ impl Default for BrowserComputerUseConfig {
 }
 
 /// Browser automation configuration (`[browser]` section).
-///
-/// Controls the `browser_open` tool and browser automation backends.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct BrowserConfig {
     /// Enable browser automation tools
@@ -2235,9 +2106,7 @@ impl Default for BrowserConfig {
 
 // ── HTTP request tool ───────────────────────────────────────────
 
-/// HTTP request tool configuration (`[http_request]` section).
-///
-/// Deny-by-default: if `allowed_domains` is empty, all HTTP requests are rejected.
+/// Named HTTP credential profile for env-backed auth injection.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct HttpRequestCredentialProfile {
     /// Header name to inject (for example `Authorization` or `X-API-Key`)
@@ -2270,8 +2139,6 @@ fn default_http_request_credential_value_prefix() -> String {
 }
 
 /// HTTP request tool configuration (`[http_request]` section).
-///
-/// Deny-by-default: if `allowed_domains` is empty, all HTTP requests are rejected.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct HttpRequestConfig {
     /// Enable `http_request` tool for API interactions
@@ -2290,12 +2157,6 @@ pub struct HttpRequestConfig {
     #[serde(default = "default_user_agent")]
     pub user_agent: String,
     /// Optional named credential profiles for env-backed auth injection.
-    ///
-    /// Example:
-    /// `[http_request.credential_profiles.github]`
-    /// `env_var = "GITHUB_TOKEN"`
-    /// `header_name = "Authorization"`
-    /// `value_prefix = "Bearer "`
     #[serde(default)]
     pub credential_profiles: HashMap<String, HttpRequestCredentialProfile>,
 }
@@ -2324,11 +2185,6 @@ fn default_http_timeout_secs() -> u64 {
 // ── Web fetch ────────────────────────────────────────────────────
 
 /// Web fetch tool configuration (`[web_fetch]` section).
-///
-/// Fetches web pages and converts HTML to plain text for LLM consumption.
-/// Domain filtering: `allowed_domains` controls which hosts are reachable (use `["*"]`
-/// for all public hosts). `blocked_domains` takes priority over `allowed_domains`.
-/// If `allowed_domains` is empty, all requests are rejected (deny-by-default).
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct WebFetchConfig {
     /// Enable `web_fetch` tool for fetching web page content
@@ -2360,17 +2216,11 @@ pub struct WebFetchConfig {
 pub enum FirecrawlMode {
     #[default]
     Scrape,
-    /// Reserved for future multi-page crawl support. Accepted in config
-    /// deserialization to avoid breaking existing files, but not yet
-    /// implemented — `fetch_via_firecrawl` always uses the `/scrape` endpoint.
+    /// Reserved for future multi-page crawl support.
     Crawl,
 }
 
 /// Firecrawl fallback configuration for JS-heavy and bot-blocked sites.
-///
-/// When enabled, if the standard web fetch fails (HTTP error, empty body, or
-/// body shorter than 100 characters suggesting a JS-only page), the tool
-/// falls back to the Firecrawl API for stealth content extraction.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct FirecrawlConfig {
     /// Enable Firecrawl fallback
@@ -2507,7 +2357,6 @@ pub struct AskUserConfig {
     #[serde(default = "default_ask_user_timeout_secs")]
     pub default_timeout_secs: u64,
     /// Preferred channel when none is specified (e.g. "slack").
-    /// When empty, uses the first available channel.
     #[serde(default)]
     pub default_channel: Option<String>,
 }
@@ -3089,7 +2938,6 @@ pub struct StorageProviderConfig {
     pub provider: String,
 
     /// Connection URL for remote providers.
-    /// Accepts legacy aliases: dbURL, database_url, databaseUrl.
     #[serde(
         default,
         alias = "dbURL",
@@ -3111,10 +2959,6 @@ pub struct StorageProviderConfig {
     pub connect_timeout_secs: Option<u64>,
 
     /// Enable TLS for the PostgreSQL connection.
-    ///
-    /// `true` — require TLS (skips certificate verification; suitable for
-    /// self-signed certs and most managed databases).
-    /// `false` (default) — plain TCP, backward-compatible.
     #[serde(default)]
     pub tls: bool,
 }
@@ -3140,24 +2984,16 @@ impl Default for StorageProviderConfig {
     }
 }
 
-/// Memory backend configuration (`[memory]` section).
-///
-/// Controls conversation memory storage, embeddings, hybrid search, response caching,
-/// and memory snapshot/hydration.
-/// Configuration for Qdrant vector database backend (`[memory.qdrant]`).
-/// Used when `[memory].backend = "qdrant"` or `"sqlite_qdrant_hybrid"`.
+/// Qdrant vector database backend configuration (`[memory.qdrant]` section).
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct QdrantConfig {
     /// Qdrant server URL (e.g. "http://localhost:6333").
-    /// Falls back to `QDRANT_URL` env var if not set.
     #[serde(default)]
     pub url: Option<String>,
     /// Qdrant collection name for storing memories.
-    /// Falls back to `QDRANT_COLLECTION` env var, or default "agentzero_memories".
     #[serde(default = "default_qdrant_collection")]
     pub collection: String,
     /// Optional API key for Qdrant Cloud or secured instances.
-    /// Falls back to `QDRANT_API_KEY` env var if not set.
     #[serde(default)]
     pub api_key: Option<String>,
 }
@@ -3176,13 +3012,12 @@ impl Default for QdrantConfig {
     }
 }
 
+/// Memory backend configuration (`[memory]` section).
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[allow(clippy::struct_excessive_bools)]
 pub struct MemoryConfig {
-    /// "sqlite" | "sqlite_qdrant_hybrid" | "lucid" | "postgres" | "qdrant" | "markdown" | "none" (`none` = explicit no-op memory)
-    ///
-    /// `postgres` requires `[storage.provider.config]` with `db_url` (`dbURL` alias supported).
-    /// `qdrant` and `sqlite_qdrant_hybrid` use `[memory.qdrant]` config or `QDRANT_URL` env var.
+    /// "sqlite" | "sqlite_qdrant_hybrid" | "lucid" | "postgres" | "qdrant" | "markdown" | "none"
+    /// (`none` = explicit no-op memory)
     pub backend: String,
     /// Auto-save user-stated conversation input to memory (assistant output is excluded)
     pub auto_save: bool,
@@ -3226,8 +3061,6 @@ pub struct MemoryConfig {
     #[serde(default = "default_keyword_weight")]
     pub keyword_weight: f64,
     /// Minimum hybrid score (0.0–1.0) for a memory to be included in context.
-    /// Memories scoring below this threshold are dropped to prevent irrelevant
-    /// context from bleeding into conversations. Default: 0.4
     #[serde(default = "default_min_relevance_score")]
     pub min_relevance_score: f64,
     /// Max embedding cache entries before LRU eviction
@@ -3261,31 +3094,15 @@ pub struct MemoryConfig {
 
     // ── SQLite backend options ─────────────────────────────────
     /// For sqlite backend: max seconds to wait when opening the DB (e.g. file locked).
-    /// None = wait indefinitely (default). Recommended max: 300.
     #[serde(default)]
     pub sqlite_open_timeout_secs: Option<u64>,
 
     /// SQLite journal mode: "wal" (default) or "delete".
-    ///
-    /// WAL (Write-Ahead Logging) provides better concurrency and is the
-    /// recommended default. However, WAL requires shared-memory support
-    /// (mmap/shm) which is **not available** on many network and virtual
-    /// shared filesystems (NFS, SMB/CIFS, UTM/VirtioFS, VirtualBox shared
-    /// folders, etc.), causing `xShmMap` I/O errors at startup.
-    ///
-    /// Set to `"delete"` when your workspace lives on such a filesystem.
-    ///
-    /// Example:
-    /// ```toml
-    /// [memory]
-    /// sqlite_journal_mode = "delete"
-    /// ```
     #[serde(default = "default_sqlite_journal_mode")]
     pub sqlite_journal_mode: String,
 
     // ── Qdrant backend options ─────────────────────────────────
     /// Configuration for Qdrant vector database backend.
-    /// Used when `backend = "qdrant"` or `backend = "sqlite_qdrant_hybrid"`.
     #[serde(default)]
     pub qdrant: QdrantConfig,
 }
@@ -3400,7 +3217,6 @@ pub struct ObservabilityConfig {
     pub otel_service_name: Option<String>,
 
     /// Runtime trace storage mode: "none" | "rolling" | "full".
-    /// Controls whether model replies and tool-call diagnostics are persisted.
     #[serde(default = "default_runtime_trace_mode")]
     pub runtime_trace_mode: String,
 
@@ -3443,9 +3259,6 @@ fn default_runtime_trace_max_entries() -> usize {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct HooksConfig {
     /// Enable lifecycle hook execution.
-    ///
-    /// Hooks run in-process with the same privileges as the main runtime.
-    /// Keep enabled hook handlers narrowly scoped and auditable.
     pub enabled: bool,
     #[serde(default)]
     pub builtin: BuiltinHooksConfig,
@@ -3476,22 +3289,6 @@ pub struct BuiltinHooksConfig {
 // ── Plugin system ─────────────────────────────────────────────────────────────
 
 /// Plugin system configuration (`[plugins]` section).
-///
-/// Controls plugin discovery, loading, and per-plugin settings.
-/// Mirrors OpenClaw's `plugins` config block.
-///
-/// Example:
-/// ```toml
-/// [plugins]
-/// enabled = true
-/// allow = ["hello-world"]
-///
-/// [plugins.entries.hello-world]
-/// enabled = true
-///
-/// [plugins.entries.hello-world.config]
-/// greeting = "Howdy"
-/// ```
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct PluginsConfig {
     /// Master switch — set to `false` to disable all plugin loading. Default: `true`.
@@ -3499,7 +3296,6 @@ pub struct PluginsConfig {
     pub enabled: bool,
 
     /// Allowlist — if non-empty, only plugins with these IDs are loaded.
-    /// An empty list means all discovered plugins are eligible.
     #[serde(default)]
     pub allow: Vec<String>,
 
@@ -3508,8 +3304,6 @@ pub struct PluginsConfig {
     pub deny: Vec<String>,
 
     /// Extra directories to scan for plugins (in addition to the standard locations).
-    /// Standard locations: `<binary_dir>/extensions/`, `~/.agentzero/extensions/`,
-    /// `<workspace>/.agentzero/extensions/`.
     #[serde(default)]
     pub load_paths: Vec<String>,
 
@@ -3537,8 +3331,7 @@ impl Default for PluginsConfig {
 /// Per-plugin configuration entry (`[plugins.entries.<id>]`).
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct PluginEntryConfig {
-    /// Override the plugin's enabled state. If absent, the plugin is enabled
-    /// unless it is bundled-and-disabled-by-default.
+    /// Override the plugin's enabled state.
     pub enabled: Option<bool>,
 
     /// Plugin-specific configuration table, passed to `PluginApi::plugin_config()`.
@@ -3561,15 +3354,11 @@ impl Default for PluginEntryConfig {
 #[serde(rename_all = "snake_case")]
 pub enum NonCliNaturalLanguageApprovalMode {
     /// Do not treat natural-language text as approval-management commands.
-    /// Operators must use explicit slash commands.
     Disabled,
     /// Natural-language approval phrases create a pending request that must be
     /// confirmed with a request ID.
     RequestConfirm,
     /// Natural-language approval phrases directly approve the named tool.
-    ///
-    /// This keeps private-chat workflows simple while still requiring a human
-    /// sender and passing the same approver allowlist checks as slash commands.
     #[default]
     Direct,
 }
@@ -3584,29 +3373,10 @@ pub enum CommandContextRuleAction {
     /// Matching context is explicitly denied.
     Deny,
     /// Matching context requires interactive approval in supervised mode.
-    ///
-    /// This does not allow a command by itself; allowlist and deny checks still apply.
     RequireApproval,
 }
 
 /// Context-aware command rule for shell commands.
-///
-/// Rules are evaluated per command segment. Command matching accepts command
-/// names (`curl`), explicit paths (`/usr/bin/curl`), and wildcard (`*`).
-///
-/// Matching semantics:
-/// - `action = "deny"`: if all constraints match, the segment is rejected.
-/// - `action = "allow"`: if at least one allow rule exists for a command,
-///   segments must match at least one of those allow rules.
-/// - `action = "require_approval"`: matching segments require explicit
-///   `approved=true` in supervised mode, even when `shell` is auto-approved.
-///
-/// Constraints are optional:
-/// - `allowed_domains`: require URL arguments to match these hosts/patterns.
-/// - `allowed_path_prefixes`: require path-like arguments to stay under these prefixes.
-/// - `denied_path_prefixes`: for deny rules, match when any path-like argument
-///   is under these prefixes; for allow rules, require path arguments not to hit
-///   these prefixes.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
 pub struct CommandContextRuleConfig {
     /// Command name/path pattern (`git`, `/usr/bin/curl`, or `*`).
@@ -3617,48 +3387,33 @@ pub struct CommandContextRuleConfig {
     pub action: CommandContextRuleAction,
 
     /// Allowed host patterns for URL arguments.
-    ///
-    /// Supports exact hosts (`api.example.com`) and wildcard suffixes (`*.example.com`).
     #[serde(default)]
     pub allowed_domains: Vec<String>,
 
     /// Allowed path prefixes for path-like arguments.
-    ///
-    /// Prefixes may be absolute, `~/...`, or workspace-relative.
     #[serde(default)]
     pub allowed_path_prefixes: Vec<String>,
 
     /// Denied path prefixes for path-like arguments.
-    ///
-    /// Prefixes may be absolute, `~/...`, or workspace-relative.
     #[serde(default)]
     pub denied_path_prefixes: Vec<String>,
 
     /// Permit high-risk commands when this allow rule matches.
-    ///
-    /// The command still requires explicit `approved=true` in supervised mode.
     #[serde(default)]
     pub allow_high_risk: bool,
 }
 
 /// Autonomy and security policy configuration (`[autonomy]` section).
-///
-/// Controls what the agent is allowed to do: shell commands, filesystem access,
-/// risk approval gates, and per-policy budgets.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct AutonomyConfig {
     /// Autonomy level: `read_only`, `supervised` (default), or `full`.
     pub level: AutonomyLevel,
-    /// Restrict absolute filesystem paths to workspace-relative references. Default: `true`.
-    /// Resolved paths outside the workspace still require `allowed_roots`.
+    /// Restrict absolute filesystem paths to workspace-relative references.
     pub workspace_only: bool,
     /// Allowlist of executable names permitted for shell execution.
     pub allowed_commands: Vec<String>,
 
     /// Context-aware shell command allow/deny rules.
-    ///
-    /// These rules are evaluated per command segment and can narrow or override
-    /// global `allowed_commands` behavior for matching commands.
     #[serde(default)]
     pub command_context_rules: Vec<CommandContextRuleConfig>,
     /// Explicit path denylist. Default includes system-critical paths and sensitive dotdirs.
@@ -3677,23 +3432,16 @@ pub struct AutonomyConfig {
     pub block_high_risk_commands: bool,
 
     /// Additional environment variables allowed for shell tool subprocesses.
-    ///
-    /// These names are explicitly allowlisted and merged with the built-in safe
-    /// baseline (`PATH`, `HOME`, etc.) after `env_clear()`.
     #[serde(default)]
     pub shell_env_passthrough: Vec<String>,
 
-    /// Allow `file_read` to access sensitive workspace secrets such as `.env`,
-    /// key material, and credential files.
-    ///
-    /// Default is `false` to reduce accidental secret exposure via tool output.
+    /// Allow `file_read` to access sensitive workspace secrets such as `.env`, key
+    /// material, and credential files.
     #[serde(default)]
     pub allow_sensitive_file_reads: bool,
 
-    /// Allow `file_write` / `file_edit` to modify sensitive workspace secrets
-    /// such as `.env`, key material, and credential files.
-    ///
-    /// Default is `false` to reduce accidental secret corruption/exfiltration.
+    /// Allow `file_write` / `file_edit` to modify sensitive workspace secrets such
+    /// as `.env`, key material, and credential files.
     #[serde(default)]
     pub allow_sensitive_file_writes: bool,
 
@@ -3706,49 +3454,22 @@ pub struct AutonomyConfig {
     pub always_ask: Vec<String>,
 
     /// Extra directory roots the agent may read/write outside the workspace.
-    /// Supports absolute, `~/...`, and workspace-relative entries.
-    /// Resolved paths under any of these roots pass `is_resolved_path_allowed`.
     #[serde(default)]
     pub allowed_roots: Vec<String>,
 
     /// Tools to exclude from non-CLI channels (e.g. slack, Discord).
-    ///
-    /// When a tool is listed here, non-CLI channels will not expose it to the
-    /// model in tool specs.
     #[serde(default)]
     pub non_cli_excluded_tools: Vec<String>,
 
     /// Optional allowlist for who can manage non-CLI approval commands.
-    ///
-    /// When empty, any sender already admitted by the channel allowlist can
-    /// use approval-management commands.
-    ///
-    /// Supported entry formats:
-    /// - `"*"`: allow any sender on any channel
-    /// - `"alice"`: allow sender `alice` on any channel
-    /// - `"slack:alice"`: allow sender `alice` only on `slack`
-    /// - `"slack:*"`: allow any sender on `slack`
-    /// - `"*:alice"`: allow sender `alice` on any channel
     #[serde(default)]
     pub non_cli_approval_approvers: Vec<String>,
 
     /// Natural-language handling mode for non-CLI approval-management commands.
-    ///
-    /// Values:
-    /// - `direct` (default): phrases like `授权工具 shell` immediately approve.
-    /// - `request_confirm`: phrases create pending requests requiring confirm.
-    /// - `disabled`: ignore natural-language approval commands (slash only).
     #[serde(default)]
     pub non_cli_natural_language_approval_mode: NonCliNaturalLanguageApprovalMode,
 
     /// Optional per-channel override for natural-language approval mode.
-    ///
-    /// Keys are channel names (for example: `slack`, `discord`, `slack`).
-    /// Values use the same enum as `non_cli_natural_language_approval_mode`.
-    ///
-    /// Example:
-    /// - `slack = "direct"` for private-chat ergonomics
-    /// - `discord = "request_confirm"` for stricter team channels
     #[serde(default)]
     pub non_cli_natural_language_approval_mode_by_channel:
         HashMap<String, NonCliNaturalLanguageApprovalMode>,
@@ -3872,16 +3593,10 @@ pub struct RuntimeConfig {
     pub docker: DockerRuntimeConfig,
 
     /// Global reasoning override for providers that expose explicit controls.
-    /// - `None`: provider default behavior
-    /// - `Some(true)`: request reasoning/thinking when supported
-    /// - `Some(false)`: disable reasoning/thinking when supported
     #[serde(default)]
     pub reasoning_enabled: Option<bool>,
 
     /// Deprecated compatibility alias for `[provider].reasoning_level`.
-    /// - Canonical key: `provider.reasoning_level`
-    /// - Legacy key accepted for compatibility: `runtime.reasoning_level`
-    /// - When both are set, provider-level value wins.
     #[serde(default)]
     pub reasoning_level: Option<String>,
 }
@@ -3983,20 +3698,6 @@ pub enum ResearchTrigger {
 }
 
 /// Research phase configuration (`[research]` section).
-///
-/// When enabled, the agent proactively gathers information using tools
-/// before generating its main response. This creates a "thinking" phase
-/// where the agent explores the codebase, searches memory, or fetches
-/// external data to inform its answer.
-///
-/// ```toml
-/// [research]
-/// enabled = true
-/// trigger = "keywords"
-/// keywords = ["find", "search", "check", "investigate"]
-/// max_iterations = 5
-/// show_progress = true
-/// ```
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ResearchPhaseConfig {
     /// Enable the research phase.
@@ -4024,7 +3725,6 @@ pub struct ResearchPhaseConfig {
     pub show_progress: bool,
 
     /// Custom system prompt prefix for research phase.
-    /// If empty, uses default research instructions.
     #[serde(default)]
     pub system_prompt_prefix: String,
 }
@@ -4069,8 +3769,6 @@ impl Default for ResearchPhaseConfig {
 // ── Reliability / supervision ────────────────────────────────────
 
 /// Reliability and supervision configuration (`[reliability]` section).
-///
-/// Controls provider retries, fallback chains, API key rotation, and channel restart backoff.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ReliabilityConfig {
     /// Retries per provider before failing over.
@@ -4079,35 +3777,20 @@ pub struct ReliabilityConfig {
     /// Base backoff (ms) for provider retry delay.
     #[serde(default = "default_provider_backoff_ms")]
     pub provider_backoff_ms: u64,
+    /// Master toggle for the fallback provider chain.
+    #[serde(default = "default_fallback_enabled")]
+    pub fallback_enabled: bool,
     /// Fallback provider chain (e.g. `["anthropic", "openai"]`).
     #[serde(default)]
     pub fallback_providers: Vec<String>,
     /// Optional per-fallback provider API keys keyed by fallback entry name.
-    /// This allows distinct credentials for multiple `custom:<url>` endpoints.
-    ///
-    /// Contract:
-    /// - Default/omitted (`{}` via `#[serde(default)]`): no per-entry override is used.
-    /// - Compatibility: additive and non-breaking for existing configs that omit this field.
-    /// - Rollback/migration: remove this map (or specific entries) to revert to provider/env-based
-    ///   credential resolution.
     #[serde(default)]
     pub fallback_api_keys: std::collections::HashMap<String, String>,
-    /// Per-model fallback chains, keyed by model name. When a model fails, try
-    /// these alternative model names in order, against every provider in
-    /// priority order.
-    /// Example: `{ "claude-opus-4-20250514" = ["claude-sonnet-4-20250514", "gpt-4o"] }`
+    /// Per-model fallback chains, keyed by model name.
     #[serde(default)]
     pub model_fallbacks: std::collections::HashMap<String, Vec<String>>,
-    /// Provider-scoped model remaps, keyed by provider/fallback entry name
-    /// (must exactly match an entry in `fallback_providers`, or the primary
-    /// provider name). When that provider is tried, retry it with these model
-    /// names instead of the original model.
-    /// Example: `{ "openrouter" = ["anthropic/claude-sonnet-4"] }`
-    ///
-    /// Contract:
-    /// - Default/omitted (`{}`): fallback providers are tried with the original model name unchanged.
-    /// - Compatibility: additive and non-breaking for existing configs that omit this field.
-    /// - Distinct from `model_fallbacks`, which is keyed by model name rather than provider name.
+    /// Provider-scoped model remaps, keyed by provider/fallback entry name (must exactly match an
+    /// entry in `fallback_providers`, or the primary provider name).
     #[serde(default)]
     pub provider_model_overrides: std::collections::HashMap<String, Vec<String>>,
     /// Initial backoff for channel/daemon restarts.
@@ -4132,6 +3815,10 @@ fn default_provider_backoff_ms() -> u64 {
     500
 }
 
+fn default_fallback_enabled() -> bool {
+    false
+}
+
 fn default_channel_backoff_secs() -> u64 {
     2
 }
@@ -4153,6 +3840,7 @@ impl Default for ReliabilityConfig {
         Self {
             provider_retries: default_provider_retries(),
             provider_backoff_ms: default_provider_backoff_ms(),
+            fallback_enabled: default_fallback_enabled(),
             fallback_providers: Vec::new(),
             fallback_api_keys: std::collections::HashMap::new(),
             model_fallbacks: std::collections::HashMap::new(),
@@ -4168,20 +3856,6 @@ impl Default for ReliabilityConfig {
 // ── Model routing ────────────────────────────────────────────────
 
 /// Route a task hint to a specific provider + model.
-///
-/// ```toml
-/// [[model_routes]]
-/// hint = "reasoning"
-/// provider = "openrouter"
-/// model = "anthropic/claude-opus-4-20250514"
-///
-/// [[model_routes]]
-/// hint = "fast"
-/// provider = "groq"
-/// model = "llama-3.3-70b-versatile"
-/// ```
-///
-/// Usage: pass `hint:reasoning` as the model parameter to route the request.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ModelRouteConfig {
     /// Task hint name (e.g. "reasoning", "fast", "code", "summarize")
@@ -4191,23 +3865,15 @@ pub struct ModelRouteConfig {
     /// Model to use with that provider
     pub model: String,
     /// Optional max_tokens override for this route.
-    /// When set, provider requests cap output tokens to this value.
     #[serde(default)]
     pub max_tokens: Option<u32>,
     /// Optional API key override for this route's provider
     #[serde(default)]
     pub api_key: Option<String>,
     /// Optional route-specific transport override for this route.
-    /// Supported values: "auto", "websocket", "sse".
-    ///
-    /// When `model_routes[].transport` is unset, the route inherits `provider.transport`.
-    /// If both are unset, runtime defaults are used (`auto` for OpenAI Codex).
-    /// Existing configs without this field remain valid.
     #[serde(default)]
     pub transport: Option<String>,
     /// Optional route-specific API protocol override for `custom:` providers.
-    /// When set, this route uses the chosen protocol regardless of the global
-    /// `provider_api`. Only valid when `provider` starts with `custom:`.
     #[serde(default)]
     pub provider_api: Option<ProviderApiMode>,
 }
@@ -4215,17 +3881,6 @@ pub struct ModelRouteConfig {
 // ── Embedding routing ───────────────────────────────────────────
 
 /// Route an embedding hint to a specific provider + model.
-///
-/// ```toml
-/// [[embedding_routes]]
-/// hint = "semantic"
-/// provider = "openai"
-/// model = "text-embedding-3-small"
-/// dimensions = 1536
-///
-/// [memory]
-/// embedding_model = "hint:semantic"
-/// ```
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct EmbeddingRouteConfig {
     /// Route hint name (e.g. "semantic", "archive", "faq")
@@ -4344,15 +3999,12 @@ pub struct ConsolidationConfig {
     #[serde(default)]
     pub timezone: Option<String>,
     /// Optional custom path to the consolidation prompt file (relative to workspace_dir).
-    /// Defaults to `CONSOLIDATION.md` in workspace root.
     #[serde(default)]
     pub prompt_file: Option<String>,
     /// Channel to post the consolidation summary to after each run (e.g. "slack", "discord").
-    /// When omitted, no announcement is sent.
     #[serde(default)]
     pub delivery_channel: Option<String>,
     /// Target recipient for delivery (e.g. Slack channel ID).
-    /// When omitted, auto-resolved from the matching channel config.
     #[serde(default)]
     pub delivery_to: Option<String>,
     /// Treat delivery failures as non-fatal. Default: `true`.
@@ -4457,8 +4109,6 @@ impl Default for CronConfig {
 // ── Tunnel ──────────────────────────────────────────────────────
 
 /// Tunnel configuration for exposing the gateway publicly (`[tunnel]` section).
-///
-/// Supported providers: `"none"` (default), `"cloudflare"`, `"tailscale"`, `"ngrok"`, `"custom"`.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct TunnelConfig {
     /// Tunnel provider: `"none"`, `"cloudflare"`, `"tailscale"`, `"ngrok"`, or `"custom"`. Default: `"none"`.
@@ -4518,8 +4168,7 @@ pub struct NgrokTunnelConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct CustomTunnelConfig {
-    /// Command template to start the tunnel. Use {port} and {host} placeholders.
-    /// Example: "bore local {port} --to bore.pub"
+    /// Command template to start the tunnel.
     pub start_command: String,
     /// Optional URL to check tunnel health
     pub health_url: Option<String>,
@@ -4547,9 +4196,6 @@ impl<T: ChannelConfig> crate::config::traits::ConfigHandle for ConfigWrapper<T> 
 }
 
 /// Top-level channel configurations (`[channels_config]` section).
-///
-/// Each channel sub-section (e.g. `slack`, `discord`) is optional;
-/// setting it to `Some(...)` enables that channel.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ChannelsConfig {
     /// Enable the CLI interactive channel. Default: `true`.
@@ -4565,16 +4211,9 @@ pub struct ChannelsConfig {
     /// IRC channel configuration.
     pub irc: Option<IrcConfig>,
     /// ACK emoji reaction policy overrides for channels that support message reactions.
-    ///
-    /// Use this table to control reaction enable/disable, emoji pools, and conditional rules
-    /// without hardcoding behavior in channel implementations.
     #[serde(default)]
     pub ack_reaction: AckReactionChannelsConfig,
     /// Base timeout in seconds for processing a single channel message (LLM + tools).
-    /// Runtime uses this as a per-turn budget that scales with tool-loop depth
-    /// (up to 4x, capped) so one slow/retried model call does not consume the
-    /// entire conversation budget.
-    /// Default: 300s for on-device LLMs (Ollama) which are slower than cloud APIs.
     #[serde(default = "default_channel_message_timeout_secs")]
     pub message_timeout_secs: u64,
 }
@@ -4687,14 +4326,9 @@ impl GroupReplyMode {
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
 pub struct GroupReplyConfig {
     /// Optional explicit trigger mode.
-    ///
-    /// If omitted, channel-specific legacy behavior is used for compatibility.
     #[serde(default)]
     pub mode: Option<GroupReplyMode>,
     /// Sender IDs that always trigger group replies.
-    ///
-    /// These IDs bypass mention gating in group chats, but do not bypass the
-    /// channel-level inbound allowlist (`allowed_users` / equivalents).
     #[serde(default)]
     pub allowed_sender_ids: Vec<String>,
 }
@@ -4771,7 +4405,6 @@ pub struct AckReactionRuleConfig {
     #[serde(default)]
     pub action: AckReactionRuleAction,
     /// Optional probabilistic gate in `[0.0, 1.0]` for this rule.
-    /// When omitted, falls back to channel-level `sample_rate`.
     #[serde(default)]
     pub sample_rate: Option<f64>,
     /// Per-rule strategy override (falls back to parent strategy when omitted).
@@ -4814,7 +4447,6 @@ pub struct AckReactionConfig {
     #[serde(default)]
     pub strategy: AckReactionStrategy,
     /// Probabilistic gate in `[0.0, 1.0]` applied to default fallback selection.
-    /// Rule-level `sample_rate` overrides this for matched rules.
     #[serde(default = "default_ack_reaction_sample_rate")]
     pub sample_rate: f64,
     /// Default emoji pool. When empty, channel built-in defaults are used.
@@ -4887,11 +4519,9 @@ pub struct DiscordConfig {
     #[serde(default)]
     pub allowed_users: Vec<String>,
     /// When true, process messages from other bots (not just humans).
-    /// The bot still ignores its own messages to prevent feedback loops.
     #[serde(default)]
     pub listen_to_bots: bool,
     /// When true, only respond to messages that @-mention the bot.
-    /// Other messages in the guild are silently ignored.
     #[serde(default)]
     pub mention_only: bool,
     /// Group-chat trigger controls.
@@ -4932,11 +4562,8 @@ pub struct SlackConfig {
     /// Slack app-level token for Socket Mode (xapp-...).
     pub app_token: Option<String>,
     /// Optional channel ID to restrict the bot to a single channel.
-    /// Omit (or set `"*"`) to listen across all accessible channels.
-    /// Ignored when `channel_ids` is non-empty.
     pub channel_id: Option<String>,
     /// Explicit list of channel/DM IDs to listen on simultaneously.
-    /// Takes precedence over `channel_id`. Empty = fall back to `channel_id`.
     #[serde(default)]
     pub channel_ids: Vec<String>,
     /// Allowed Slack user IDs. Empty = deny all.
@@ -5109,9 +4736,6 @@ pub struct SecurityConfig {
     pub canary_tokens: bool,
 
     /// Enable semantic prompt-injection guard backed by vector similarity.
-    ///
-    /// This guard is additive to lexical prompt detection and only runs when
-    /// `PromptGuard` does not already block the input.
     #[serde(default)]
     pub semantic_guard: bool,
 
@@ -5264,7 +4888,6 @@ pub struct UrlAccessConfig {
     pub allow_cidrs: Vec<String>,
 
     /// Explicit domain patterns that bypass private/local-IP blocking.
-    /// Supports exact, `*.example.com`, and `*`.
     #[serde(default)]
     pub allow_domains: Vec<String>,
 
@@ -5272,28 +4895,23 @@ pub struct UrlAccessConfig {
     #[serde(default)]
     pub allow_loopback: bool,
 
-    /// Require explicit human confirmation before first-time access to an
-    /// unseen domain. Confirmed domains are persisted in `approved_domains`.
+    /// Require explicit human confirmation before first-time access to an unseen domain.
     #[serde(default)]
     pub require_first_visit_approval: bool,
 
     /// Enforce a global domain allowlist in addition to per-tool allowlists.
-    /// When enabled, hosts must match `domain_allowlist`.
     #[serde(default)]
     pub enforce_domain_allowlist: bool,
 
     /// Global trusted domain allowlist shared by all URL-based network tools.
-    /// Supports exact, `*.example.com`, and `*`.
     #[serde(default)]
     pub domain_allowlist: Vec<String>,
 
     /// Global domain blocklist shared by all URL-based network tools.
-    /// Supports exact, `*.example.com`, and `*`. Takes priority over allowlists.
     #[serde(default)]
     pub domain_blocklist: Vec<String>,
 
     /// Persisted first-visit approvals granted by a human operator.
-    /// Supports exact, `*.example.com`, and `*`.
     #[serde(default)]
     pub approved_domains: Vec<String>,
 }
@@ -5774,10 +5392,6 @@ impl Default for AuditConfig {
 // -- Atlassian (Shared) --
 
 /// Atlassian Cloud authentication configuration (`[atlassian]`).
-///
-/// Shared credentials for Jira and Confluence tools, both of which use
-/// Atlassian Cloud authentication (HTTP Basic Auth with email + API token).
-/// Requires `base_url`, `email`, and `api_token` (or the `ATLASSIAN_API_TOKEN` env var).
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct AtlassianConfig {
     #[serde(default)]
@@ -5828,10 +5442,6 @@ impl Default for AtlassianConfig {
 // -- Elasticsearch --
 
 /// Elasticsearch query tool configuration (`[elasticsearch]`).
-///
-/// Exposes a read-only `ess_query` agent tool against a single cluster.
-/// `auth` is a base64-encoded API key (as shown in Kibana "Create API key") and
-/// is encrypted at rest via the agentzero secret store (`enc2:` prefix).
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ElasticsearchConfig {
     #[serde(default)]
@@ -5865,14 +5475,6 @@ impl Default for ElasticsearchConfig {
 // -- GitHub agent tool --
 
 /// GitHub agent tool configuration (`[github]`).
-///
-/// Exposes read/write actions against GitHub issues and pull requests
-/// (gated by `allowed_actions` and the security policy's Read/Act split).
-///
-/// Token resolution: explicit `access_token` > `AGENTZERO_GITHUB_TOOL_TOKEN`
-/// env var > `GITHUB_TOKEN` env var. Note that the `http_request` tool's
-/// `github` credential profile also reads `GITHUB_TOKEN`; both share the
-/// fallback when no explicit token is set.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct GitHubToolConfig {
     #[serde(default)]
@@ -5880,7 +5482,6 @@ pub struct GitHubToolConfig {
     #[serde(default)]
     pub access_token: String,
     /// Optional API base URL override for GitHub Enterprise Server.
-    /// Defaults to `https://api.github.com` when blank.
     #[serde(default)]
     pub api_base_url: Option<String>,
     /// Wildcard repo allowlist: `*`, `owner/*`, or `owner/repo`.
@@ -5913,15 +5514,6 @@ impl Default for GitHubToolConfig {
 // -- ServiceNow agent tool --
 
 /// ServiceNow agent tool configuration (`[servicenow]`).
-///
-/// Exposes read/write actions against the ServiceNow Table API
-/// (gated by `allowed_actions` and the security policy's Read/Act split).
-///
-/// Authentication uses OAuth2 client credentials. The `client_id` and
-/// `client_secret` are encrypted at rest via the agentzero secret store
-/// (`enc2:` prefix) when `[secrets].encrypt = true`.
-///
-/// `client_secret` falls back to the `SERVICENOW_CLIENT_SECRET` env var when blank.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ServiceNowConfig {
     #[serde(default)]
@@ -5932,12 +5524,10 @@ pub struct ServiceNowConfig {
     /// OAuth2 client id (encrypted at rest).
     #[serde(default)]
     pub client_id: String,
-    /// OAuth2 client secret (encrypted at rest). Falls back to
-    /// `SERVICENOW_CLIENT_SECRET` env var when blank.
+    /// OAuth2 client secret (encrypted at rest).
     #[serde(default)]
     pub client_secret: String,
-    /// Action allowlist (e.g. `list_records`, `get_record`, `create_record`,
-    /// `update_record`).
+    /// Action allowlist (e.g. `list_records`, `get_record`, `create_record`, `update_record`).
     #[serde(default = "default_servicenow_allowed_actions")]
     pub allowed_actions: Vec<String>,
     #[serde(default = "default_servicenow_timeout")]
@@ -5968,10 +5558,6 @@ impl Default for ServiceNowConfig {
 // -- Notion --
 
 /// Notion integration configuration (`[notion]`).
-///
-/// When `enabled = true`, the agent polls a Notion database for pending tasks
-/// and exposes a `notion` tool for querying, reading, creating, and updating pages.
-/// Requires `api_key` (or the `NOTION_API_KEY` env var) and `database_id`.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct NotionConfig {
     #[serde(default)]
@@ -6367,9 +5953,6 @@ pub(crate) fn resolve_config_dir_for_workspace(workspace_dir: &Path) -> (PathBuf
 }
 
 /// Resolve the current runtime config/workspace directories for onboarding flows.
-///
-/// This mirrors the same precedence used by `Config::load_or_init()`:
-/// `AGENTZERO_CONFIG_DIR` > `AGENTZERO_WORKSPACE` > active workspace marker > defaults.
 pub(crate) async fn resolve_runtime_dirs_for_onboarding() -> Result<(PathBuf, PathBuf)> {
     let (default_agentzero_dir, default_workspace_dir) = default_config_and_workspace_dirs()?;
     let (config_dir, workspace_dir, _) =
@@ -7069,10 +6652,6 @@ impl Config {
     }
 
     /// Resolve provider reasoning level with backward-compatible runtime alias.
-    ///
-    /// Priority:
-    /// 1) `provider.reasoning_level` (canonical)
-    /// 2) `runtime.reasoning_level` (deprecated compatibility alias)
     pub fn effective_provider_reasoning_level(&self) -> Option<String> {
         let provider_level = Self::normalize_reasoning_level_override(
             self.provider.reasoning_level.as_deref(),
@@ -7112,19 +6691,11 @@ impl Config {
     }
 
     /// Resolve provider transport mode (`provider.transport`).
-    ///
-    /// Supported values:
-    /// - `auto`
-    /// - `websocket`
-    /// - `sse`
     pub fn effective_provider_transport(&self) -> Option<String> {
         Self::normalize_provider_transport(self.provider.transport.as_deref(), "provider.transport")
     }
 
     /// Resolve custom provider auth header from a matching `[model_providers.*]` profile.
-    ///
-    /// This is used when `default_provider = "custom:<url>"` and a profile with the
-    /// same `base_url` declares `auth_header` (for example `api-key` for Azure OpenAI).
     pub fn effective_custom_provider_auth_header(&self) -> Option<String> {
         let custom_provider_url = self
             .default_provider
@@ -7301,9 +6872,6 @@ impl Config {
     }
 
     /// Validate configuration values that would cause runtime failures.
-    ///
-    /// Called after TOML deserialization and env-override application to catch
-    /// obviously invalid values early instead of failing at arbitrary runtime points.
     pub fn validate(&self) -> Result<()> {
         // Gateway
         if self.gateway.host.trim().is_empty() {

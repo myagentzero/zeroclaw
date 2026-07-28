@@ -6,7 +6,7 @@ import type { FieldDef } from './types';
 
 const CATEGORY_ORDER = [
   { key: 'all', label: 'All' },
-  { key: 'general', label: 'General' },
+  { key: 'general', label: 'Providers' },
   { key: 'security', label: 'Security' },
   { key: 'channels', label: 'Channels' },
   { key: 'runtime', label: 'Runtime' },

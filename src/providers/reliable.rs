@@ -1,6 +1,7 @@
 use super::Provider;
 use super::traits::{
-    ChatMessage, ChatRequest, ChatResponse, StreamChunk, StreamOptions, StreamResult,
+    ChatMessage, ChatRequest, ChatResponse, RoutedChatResponse, StreamChunk, StreamOptions,
+    StreamResult,
 };
 use async_trait::async_trait;
 use futures_util::{StreamExt, stream};
@@ -684,6 +685,17 @@ impl Provider for ReliableProvider {
         model: &str,
         temperature: f64,
     ) -> anyhow::Result<ChatResponse> {
+        self.chat_routed(request, model, temperature)
+            .await
+            .map(|routed| routed.response)
+    }
+
+    async fn chat_routed(
+        &self,
+        request: ChatRequest<'_>,
+        model: &str,
+        temperature: f64,
+    ) -> anyhow::Result<RoutedChatResponse> {
         let models = self.model_chain(model);
         let mut failures = Vec::new();
 
@@ -710,7 +722,11 @@ impl Provider for ReliableProvider {
                                         "Provider recovered (failover/retry)"
                                     );
                                 }
-                                return Ok(resp);
+                                return Ok(RoutedChatResponse {
+                                    response: resp,
+                                    served_by_provider: Some(provider_name.clone()),
+                                    served_by_model: Some(sent_model.to_string()),
+                                });
                             }
                             Err(e) => {
                                 let non_retryable_rate_limit = is_non_retryable_rate_limit(&e);
@@ -1018,6 +1034,76 @@ mod tests {
         assert_eq!(result, "from fallback");
         assert_eq!(primary_calls.load(Ordering::SeqCst), 2);
         assert_eq!(fallback_calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn chat_routed_reports_fallback_provider_and_model() {
+        let primary_calls = Arc::new(AtomicUsize::new(0));
+        let fallback_calls = Arc::new(AtomicUsize::new(0));
+
+        let provider = ReliableProvider::new(
+            vec![
+                (
+                    "primary".into(),
+                    Box::new(NativeToolMock {
+                        calls: Arc::clone(&primary_calls),
+                        fail_until_attempt: usize::MAX,
+                        response_text: "never",
+                        tool_calls: vec![],
+                        error: "primary down",
+                    }) as Box<dyn Provider>,
+                ),
+                (
+                    "fallback".into(),
+                    Box::new(NativeToolMock {
+                        calls: Arc::clone(&fallback_calls),
+                        fail_until_attempt: 0,
+                        response_text: "from fallback",
+                        tool_calls: vec![],
+                        error: "fallback down",
+                    }) as Box<dyn Provider>,
+                ),
+            ],
+            1,
+            1,
+        );
+
+        let messages = vec![ChatMessage::user("hello")];
+        let request = ChatRequest {
+            messages: &messages,
+            tools: None,
+        };
+        let routed = provider
+            .chat_routed(request, "test-model", 0.0)
+            .await
+            .unwrap();
+
+        assert_eq!(routed.response.text.as_deref(), Some("from fallback"));
+        assert_eq!(routed.served_by_provider.as_deref(), Some("fallback"));
+        assert_eq!(routed.served_by_model.as_deref(), Some("test-model"));
+    }
+
+    #[tokio::test]
+    async fn chat_routed_default_impl_reports_none_for_plain_provider() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let mock = NativeToolMock {
+            calls: Arc::clone(&calls),
+            fail_until_attempt: 0,
+            response_text: "ok",
+            tool_calls: vec![],
+            error: "boom",
+        };
+
+        let messages = vec![ChatMessage::user("hello")];
+        let request = ChatRequest {
+            messages: &messages,
+            tools: None,
+        };
+        let routed = mock.chat_routed(request, "test-model", 0.0).await.unwrap();
+
+        assert_eq!(routed.response.text.as_deref(), Some("ok"));
+        assert!(routed.served_by_provider.is_none());
+        assert!(routed.served_by_model.is_none());
     }
 
     #[tokio::test]

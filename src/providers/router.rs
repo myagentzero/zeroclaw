@@ -1,5 +1,5 @@
 use super::Provider;
-use super::traits::{ChatMessage, ChatRequest, ChatResponse};
+use super::traits::{ChatMessage, ChatRequest, ChatResponse, RoutedChatResponse};
 use async_trait::async_trait;
 use std::collections::{HashMap, HashSet};
 
@@ -170,6 +170,22 @@ impl Provider for RouterProvider {
         let (_, provider) = &self.providers[provider_idx];
         provider
             .chat_with_tools(messages, tools, &resolved_model, temperature)
+            .await
+    }
+
+    async fn chat_routed(
+        &self,
+        request: ChatRequest<'_>,
+        model: &str,
+        temperature: f64,
+    ) -> anyhow::Result<RoutedChatResponse> {
+        let (provider_idx, resolved_model) = self.resolve(model);
+        let (_, provider) = &self.providers[provider_idx];
+        // Delegate to the resolved provider's own `chat_routed` (rather than
+        // `chat`) so a `ReliableProvider` behind this route still reports
+        // which fallback actually served the request.
+        provider
+            .chat_routed(request, &resolved_model, temperature)
             .await
     }
 
@@ -515,5 +531,89 @@ mod tests {
         assert_eq!(mocks[1].call_count(), 1);
         assert_eq!(mocks[1].last_model(), "claude-opus");
         assert_eq!(mocks[0].call_count(), 0);
+    }
+
+    /// Mock provider that overrides `chat_routed` to report a distinct
+    /// serving provider/model, simulating a `ReliableProvider` behind a
+    /// route that fell back to a secondary provider.
+    struct RoutedMockProvider {
+        served_by_provider: &'static str,
+        served_by_model: &'static str,
+    }
+
+    #[async_trait]
+    impl Provider for RoutedMockProvider {
+        async fn chat_with_system(
+            &self,
+            _system_prompt: Option<&str>,
+            _message: &str,
+            _model: &str,
+            _temperature: f64,
+        ) -> anyhow::Result<String> {
+            Ok("response".to_string())
+        }
+
+        async fn chat_routed(
+            &self,
+            request: ChatRequest<'_>,
+            model: &str,
+            temperature: f64,
+        ) -> anyhow::Result<super::super::traits::RoutedChatResponse> {
+            let response = self.chat(request, model, temperature).await?;
+            Ok(super::super::traits::RoutedChatResponse {
+                response,
+                served_by_provider: Some(self.served_by_provider.to_string()),
+                served_by_model: Some(self.served_by_model.to_string()),
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn chat_routed_passes_through_inner_providers_attribution() {
+        let router = RouterProvider::new(
+            vec![
+                (
+                    "primary".into(),
+                    Box::new(RoutedMockProvider {
+                        served_by_provider: "primary",
+                        served_by_model: "model-a",
+                    }) as Box<dyn Provider>,
+                ),
+                (
+                    "smart".into(),
+                    Box::new(RoutedMockProvider {
+                        served_by_provider: "smart-fallback",
+                        served_by_model: "claude-opus-fallback",
+                    }) as Box<dyn Provider>,
+                ),
+            ],
+            vec![(
+                "reasoning".to_string(),
+                Route {
+                    provider_name: "smart".to_string(),
+                    model: "claude-opus".to_string(),
+                },
+            )],
+            "model-a".to_string(),
+        );
+
+        let messages = vec![ChatMessage::user("hello")];
+        let request = ChatRequest {
+            messages: &messages,
+            tools: None,
+        };
+
+        let routed = router
+            .chat_routed(request, "hint:reasoning", 0.5)
+            .await
+            .unwrap();
+
+        // The router must surface the *inner* provider's attribution
+        // ("smart-fallback"), not its own route name ("smart").
+        assert_eq!(routed.served_by_provider.as_deref(), Some("smart-fallback"));
+        assert_eq!(
+            routed.served_by_model.as_deref(),
+            Some("claude-opus-fallback")
+        );
     }
 }

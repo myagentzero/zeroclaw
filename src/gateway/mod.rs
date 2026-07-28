@@ -17,7 +17,7 @@ pub mod ws;
 use crate::config::Config;
 use crate::cost::CostTracker;
 use crate::memory::{self, Memory, MemoryCategory};
-use crate::providers::{self, ChatMessage, Provider};
+use crate::providers::{self, ChatMessage, ChatRequest, Provider, RoutedChatResponse};
 use crate::runtime;
 use crate::security::SecurityPolicy;
 use crate::security::pairing::{PairingGuard, constant_time_eq, is_public_bind};
@@ -971,13 +971,38 @@ async fn prepare_gateway_messages_for_provider(
 }
 
 /// Simple chat for webhook endpoint (no tools, for backward compatibility and testing).
-async fn run_gateway_chat_simple(state: &AppState, message: &str) -> anyhow::Result<String> {
+///
+/// Uses `chat_routed` (rather than `chat_with_history`) so the caller can
+/// report real token usage — and, when `ReliableProvider` fell back to a
+/// secondary provider, attribute the cost record to the provider that
+/// actually served the request — to observability/cost tracking.
+async fn run_gateway_chat_simple(
+    state: &AppState,
+    message: &str,
+) -> anyhow::Result<RoutedChatResponse> {
     let prepared_messages = prepare_gateway_messages_for_provider(state, message).await?;
 
     state
         .provider
-        .chat_with_history(&prepared_messages, &state.model, state.temperature)
+        .chat_routed(
+            ChatRequest {
+                messages: &prepared_messages,
+                tools: None,
+            },
+            &state.model,
+            state.temperature,
+        )
         .await
+}
+
+/// Sum input/output tokens for `AgentEnd.tokens_used`, returning `None` when
+/// neither was reported (rather than `Some(0)`, which would misleadingly
+/// imply a confirmed zero-token response).
+fn sum_tokens_used(input_tokens: Option<u64>, output_tokens: Option<u64>) -> Option<u64> {
+    match (input_tokens, output_tokens) {
+        (None, None) => None,
+        (input, output) => Some(input.unwrap_or(0) + output.unwrap_or(0)),
+    }
 }
 
 /// Full-featured chat with tools for channel handlers.
@@ -1269,31 +1294,43 @@ fn handle_webhook_streaming(
         let stream = futures_util::stream::once(async move {
             match state_for_call
                 .provider
-                .chat_with_history(
-                    &messages_for_call,
+                .chat_routed(
+                    ChatRequest {
+                        messages: &messages_for_call,
+                        tools: None,
+                    },
                     &model_for_call,
                     state_for_call.temperature,
                 )
                 .await
             {
-                Ok(response) => {
+                Ok(routed) => {
                     let leak_guard_cfg = gateway_outbound_leak_guard_snapshot(&state_for_call);
                     let safe_response = sanitize_gateway_response(
-                        &response,
+                        routed.response.text_or_empty(),
                         state_for_call.tools_registry_exec.as_ref(),
                         &leak_guard_cfg,
                     );
                     let duration = started_at.elapsed();
+                    let served_by_provider =
+                        routed.served_by_provider.unwrap_or(provider_label_for_call);
+                    let served_by_model = routed.served_by_model.unwrap_or(model_label_for_call);
+                    let (input_tokens, output_tokens, cached_input_tokens) = routed
+                        .response
+                        .usage
+                        .as_ref()
+                        .map(|u| (u.input_tokens, u.output_tokens, u.cached_input_tokens))
+                        .unwrap_or((None, None, None));
                     state_for_call.observer.record_event(
                         &crate::observability::ObserverEvent::LlmResponse {
-                            provider: provider_label_for_call.clone(),
-                            model: model_label_for_call.clone(),
+                            provider: served_by_provider.clone(),
+                            model: served_by_model.clone(),
                             duration,
                             success: true,
                             error_message: None,
-                            input_tokens: None,
-                            output_tokens: None,
-                            cached_input_tokens: None,
+                            input_tokens,
+                            output_tokens,
+                            cached_input_tokens,
                             channel: Some("gateway".into()),
                         },
                     );
@@ -1302,10 +1339,10 @@ fn handle_webhook_streaming(
                     );
                     state_for_call.observer.record_event(
                         &crate::observability::ObserverEvent::AgentEnd {
-                            provider: provider_label_for_call,
-                            model: model_label_for_call,
+                            provider: served_by_provider,
+                            model: served_by_model,
                             duration,
-                            tokens_used: None,
+                            tokens_used: sum_tokens_used(input_tokens, output_tokens),
                             cost_usd: None,
                         },
                     );
@@ -1679,25 +1716,40 @@ async fn handle_webhook(
     }
 
     match run_gateway_chat_simple(&state, message).await {
-        Ok(response) => {
+        Ok(routed) => {
             let leak_guard_cfg = gateway_outbound_leak_guard_snapshot(&state);
             let safe_response = sanitize_gateway_response(
-                &response,
+                routed.response.text_or_empty(),
                 state.tools_registry_exec.as_ref(),
                 &leak_guard_cfg,
             );
             let duration = started_at.elapsed();
+            // Attribute to the provider/model that actually served the
+            // request (may be a fallback), falling back to the configured
+            // primary when the provider doesn't report it.
+            let served_by_provider = routed
+                .served_by_provider
+                .unwrap_or_else(|| provider_label.clone());
+            let served_by_model = routed
+                .served_by_model
+                .unwrap_or_else(|| model_label.clone());
+            let (input_tokens, output_tokens, cached_input_tokens) = routed
+                .response
+                .usage
+                .as_ref()
+                .map(|u| (u.input_tokens, u.output_tokens, u.cached_input_tokens))
+                .unwrap_or((None, None, None));
             state
                 .observer
                 .record_event(&crate::observability::ObserverEvent::LlmResponse {
-                    provider: provider_label.clone(),
-                    model: model_label.clone(),
+                    provider: served_by_provider.clone(),
+                    model: served_by_model.clone(),
                     duration,
                     success: true,
                     error_message: None,
-                    input_tokens: None,
-                    output_tokens: None,
-                    cached_input_tokens: None,
+                    input_tokens,
+                    output_tokens,
+                    cached_input_tokens,
                     channel: Some("gateway".into()),
                 });
             state.observer.record_metric(
@@ -1706,10 +1758,10 @@ async fn handle_webhook(
             state
                 .observer
                 .record_event(&crate::observability::ObserverEvent::AgentEnd {
-                    provider: provider_label,
-                    model: model_label,
+                    provider: served_by_provider,
+                    model: served_by_model,
                     duration,
-                    tokens_used: None,
+                    tokens_used: sum_tokens_used(input_tokens, output_tokens),
                     cost_usd: None,
                 });
 
@@ -2142,6 +2194,73 @@ mod tests {
         assert!(
             !text.contains("Prometheus backend not enabled"),
             "factory chain with cost tracking must not fall through to the disabled stub:\n{text}"
+        );
+    }
+
+    /// Regression test: the non-streaming `/webhook` simple-chat path used to
+    /// call `chat_with_history` (discarding `ChatResponse.usage`), so
+    /// `CostObserver` silently skipped recording anything for it. It now
+    /// calls `chat_routed`, so a provider that reports real token usage must
+    /// produce a cost record.
+    #[tokio::test]
+    async fn webhook_simple_chat_records_cost_from_provider_usage() {
+        let cost_config = crate::config::schema::CostConfig {
+            enabled: true,
+            ..crate::config::schema::CostConfig::default()
+        };
+        let tmp = tempfile::tempdir().expect("tempdir for cost storage");
+        let cost_tracker = Arc::new(
+            crate::cost::CostTracker::new(cost_config.clone(), tmp.path())
+                .expect("CostTracker::new should succeed for tests"),
+        );
+        let observer: Arc<dyn crate::observability::Observer> =
+            Arc::from(crate::observability::create_observer_with_cost_tracking(
+                &crate::config::ObservabilityConfig::default(),
+                Some(Arc::clone(&cost_tracker)),
+                &cost_config,
+            ));
+
+        let provider: Arc<dyn Provider> = Arc::new(UsageMockProvider);
+        let memory: Arc<dyn Memory> = Arc::new(MockMemory);
+
+        let state = AppState {
+            config: Arc::new(Mutex::new(Config::default())),
+            provider,
+            model: "test-model".into(),
+            temperature: 0.0,
+            mem: memory,
+            auto_save: false,
+            webhook_secret_hash: None,
+            pairing: Arc::new(PairingGuard::new(false, &[], None)),
+            trust_forwarded_headers: false,
+            rate_limiter: Arc::new(GatewayRateLimiter::new(100, 100, 100)),
+            idempotency_store: Arc::new(IdempotencyStore::new(Duration::from_secs(300), 1000)),
+            observer,
+            tools_registry: Arc::new(Vec::new()),
+            tools_registry_exec: Arc::new(Vec::new()),
+            multimodal: crate::config::MultimodalConfig::default(),
+            max_tool_iterations: 10,
+            cost_tracker: Some(cost_tracker.clone()),
+            event_tx: tokio::sync::broadcast::channel(16).0,
+            runtime_trace_path: None,
+        };
+
+        let body = Ok(Json(WebhookBody {
+            message: "hello".into(),
+            stream: None,
+            session_id: None,
+        }));
+        let response = handle_webhook(State(state), test_connect_info(), HeaderMap::new(), body)
+            .await
+            .into_response();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let summary = cost_tracker
+            .get_summary()
+            .expect("cost summary should be readable");
+        assert_eq!(
+            summary.request_count, 1,
+            "expected the real usage from UsageMockProvider to be recorded as a cost entry"
         );
     }
 
@@ -2655,6 +2774,47 @@ Screenshot captured successfully."#;
         ) -> anyhow::Result<String> {
             self.calls.fetch_add(1, Ordering::SeqCst);
             Ok("ok".into())
+        }
+    }
+
+    /// Mock provider that reports real token usage via `chat`, so tests can
+    /// verify usage flows through `run_gateway_chat_simple`'s `chat_routed`
+    /// call into cost tracking (regression guard for the gateway paths that
+    /// used to always report `None` tokens via `chat_with_history`).
+    #[derive(Default)]
+    struct UsageMockProvider;
+
+    #[async_trait]
+    impl Provider for UsageMockProvider {
+        async fn chat_with_system(
+            &self,
+            _system_prompt: Option<&str>,
+            _message: &str,
+            _model: &str,
+            _temperature: f64,
+        ) -> anyhow::Result<String> {
+            Ok("usage-ok".into())
+        }
+
+        async fn chat(
+            &self,
+            _request: ChatRequest<'_>,
+            _model: &str,
+            _temperature: f64,
+        ) -> anyhow::Result<crate::providers::ChatResponse> {
+            Ok(crate::providers::ChatResponse {
+                text: Some("usage-ok".into()),
+                tool_calls: Vec::new(),
+                usage: Some(crate::providers::traits::TokenUsage {
+                    input_tokens: Some(120),
+                    output_tokens: Some(80),
+                    cached_input_tokens: None,
+                }),
+                reasoning_content: None,
+                quota_metadata: None,
+                stop_reason: None,
+                raw_stop_reason: None,
+            })
         }
     }
 

@@ -1543,7 +1543,7 @@ pub async fn run_tool_call_loop(
             );
         }
 
-        let chat_future = provider.chat(
+        let chat_future = provider.chat_routed(
             ChatRequest {
                 messages: &request_messages,
                 tools: request_tools,
@@ -1569,7 +1569,15 @@ pub async fn run_tool_call_loop(
             native_tool_calls,
             parse_issue_detected,
         ) = match chat_result {
-            Ok(resp) => {
+            Ok(routed) => {
+                // `served_by_*` reflect which provider/model actually served the
+                // request — this can differ from `provider_name`/`active_model`
+                // when `ReliableProvider` fell back to a secondary provider.
+                // Tracked as mutable so continuation calls below (max-tokens
+                // retries) can update them if the serving provider changes.
+                let mut served_by_provider = routed.served_by_provider;
+                let mut served_by_model = routed.served_by_model;
+                let resp = routed.response;
                 let mut response_text = resp.text_or_empty().to_string();
                 let mut native_calls = resp.tool_calls;
                 let mut reasoning_content = resp.reasoning_content.clone();
@@ -1641,7 +1649,7 @@ pub async fn run_tool_call_loop(
                         );
                     }
 
-                    let continuation_future = provider.chat(
+                    let continuation_future = provider.chat_routed(
                         ChatRequest {
                             messages: &continuation_messages,
                             tools: request_tools,
@@ -1659,7 +1667,15 @@ pub async fn run_tool_call_loop(
                     };
 
                     let continuation_resp = match continuation_result {
-                        Ok(response) => response,
+                        Ok(routed) => {
+                            if routed.served_by_provider.is_some() {
+                                served_by_provider = routed.served_by_provider;
+                            }
+                            if routed.served_by_model.is_some() {
+                                served_by_model = routed.served_by_model;
+                            }
+                            routed.response
+                        }
                         Err(error) => {
                             continuation_termination_reason = Some("provider_error");
                             continuation_error =
@@ -1760,8 +1776,11 @@ pub async fn run_tool_call_loop(
                 }
 
                 observer.record_event(&ObserverEvent::LlmResponse {
-                    provider: provider_name.to_string(),
-                    model: active_model.clone(),
+                    // Attribute to the provider/model that actually served the
+                    // request (may be a fallback), falling back to the
+                    // configured primary when the provider doesn't report it.
+                    provider: served_by_provider.unwrap_or_else(|| provider_name.to_string()),
+                    model: served_by_model.unwrap_or_else(|| active_model.clone()),
                     duration: llm_started_at.elapsed(),
                     success: true,
                     error_message: None,

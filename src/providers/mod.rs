@@ -39,8 +39,8 @@ pub mod traits;
 #[allow(unused_imports)]
 pub use traits::{
     ChatMessage, ChatRequest, ChatResponse, ConversationMessage, NormalizedStopReason, Provider,
-    ProviderCapabilityError, ROLE_ASSISTANT, ROLE_SYSTEM, ROLE_TOOL, ROLE_USER, ToolCall,
-    ToolResultMessage, is_user_or_assistant_role,
+    ProviderCapabilityError, ROLE_ASSISTANT, ROLE_SYSTEM, ROLE_TOOL, ROLE_USER, RoutedChatResponse,
+    ToolCall, ToolResultMessage, is_user_or_assistant_role,
 };
 
 use crate::auth::AuthService;
@@ -1634,14 +1634,19 @@ pub fn build_fallback_provider(
     create_provider_with_options(provider_name, fallback_api_key, &fallback_options)
 }
 
-/// Create provider chain with retry/fallback behavior and auth runtime options.
-pub fn create_resilient_provider_with_options(
+/// Build the ordered `(name, provider)` chain for the resilient provider:
+/// the primary provider followed by any enabled fallback providers.
+///
+/// Split out from `create_resilient_provider_with_options` so the chain
+/// composition (in particular, whether `reliability.fallback_enabled`
+/// actually excludes fallbacks) can be tested directly.
+fn build_provider_chain(
     primary_name: &str,
     api_key: Option<&str>,
     api_url: Option<&str>,
     reliability: &crate::config::ReliabilityConfig,
     options: &ProviderRuntimeOptions,
-) -> anyhow::Result<Box<dyn Provider>> {
+) -> anyhow::Result<Vec<(String, Box<dyn Provider>)>> {
     let mut providers: Vec<(String, Box<dyn Provider>)> = Vec::new();
 
     let primary_provider = match primary_name {
@@ -1652,21 +1657,36 @@ pub fn create_resilient_provider_with_options(
     };
     providers.push((primary_name.to_string(), primary_provider));
 
-    for fallback in &reliability.fallback_providers {
-        if fallback == primary_name || providers.iter().any(|(name, _)| name == fallback) {
-            continue;
-        }
+    if reliability.fallback_enabled {
+        for fallback in &reliability.fallback_providers {
+            if fallback == primary_name || providers.iter().any(|(name, _)| name == fallback) {
+                continue;
+            }
 
-        match build_fallback_provider(fallback, reliability, options) {
-            Ok(provider) => providers.push((fallback.clone(), provider)),
-            Err(_error) => {
-                tracing::warn!(
-                    fallback_provider = fallback.as_str(),
-                    "Ignoring invalid fallback provider during initialization"
-                );
+            match build_fallback_provider(fallback, reliability, options) {
+                Ok(provider) => providers.push((fallback.clone(), provider)),
+                Err(_error) => {
+                    tracing::warn!(
+                        fallback_provider = fallback.as_str(),
+                        "Ignoring invalid fallback provider during initialization"
+                    );
+                }
             }
         }
     }
+
+    Ok(providers)
+}
+
+/// Create provider chain with retry/fallback behavior and auth runtime options.
+pub fn create_resilient_provider_with_options(
+    primary_name: &str,
+    api_key: Option<&str>,
+    api_url: Option<&str>,
+    reliability: &crate::config::ReliabilityConfig,
+    options: &ProviderRuntimeOptions,
+) -> anyhow::Result<Box<dyn Provider>> {
+    let providers = build_provider_chain(primary_name, api_key, api_url, reliability, options)?;
 
     let reliable = ReliableProvider::new(
         providers,
@@ -3050,6 +3070,7 @@ mod tests {
         let reliability = crate::config::ReliabilityConfig {
             provider_retries: 1,
             provider_backoff_ms: 100,
+            fallback_enabled: true,
             fallback_providers: vec![
                 "openrouter".into(),
                 "nonexistent-provider".into(),
@@ -3075,6 +3096,73 @@ mod tests {
     }
 
     #[test]
+    fn reliability_config_defaults_fallback_to_disabled() {
+        assert!(
+            !crate::config::ReliabilityConfig::default().fallback_enabled,
+            "fallback_enabled must default to false; fallback_providers also needs deliberate configuration"
+        );
+    }
+
+    /// `fallback_enabled = false` (the default) must exclude configured
+    /// fallback providers from the chain entirely, leaving only the primary
+    /// provider, while `fallback_enabled = true` builds the full chain.
+    #[test]
+    fn fallback_enabled_toggle_controls_chain_membership() {
+        let reliability = crate::config::ReliabilityConfig {
+            provider_retries: 1,
+            provider_backoff_ms: 100,
+            fallback_enabled: false,
+            fallback_providers: vec!["openai".into(), "lmstudio".into()],
+            fallback_api_keys: std::collections::HashMap::new(),
+            model_fallbacks: std::collections::HashMap::new(),
+            provider_model_overrides: std::collections::HashMap::new(),
+            channel_initial_backoff_secs: 2,
+            channel_max_backoff_secs: 60,
+            scheduler_poll_secs: 15,
+            scheduler_retries: 2,
+        };
+
+        let options = ProviderRuntimeOptions::default();
+        let disabled_chain = build_provider_chain(
+            "openrouter",
+            Some("provider-test-credential"),
+            None,
+            &reliability,
+            &options,
+        )
+        .expect("primary-only chain should build");
+        assert_eq!(
+            disabled_chain
+                .iter()
+                .map(|(name, _)| name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["openrouter"],
+            "disabled fallback_enabled must exclude all fallback providers"
+        );
+
+        let enabled_reliability = crate::config::ReliabilityConfig {
+            fallback_enabled: true,
+            ..reliability
+        };
+        let enabled_chain = build_provider_chain(
+            "openrouter",
+            Some("provider-test-credential"),
+            None,
+            &enabled_reliability,
+            &options,
+        )
+        .expect("full chain should build");
+        assert_eq!(
+            enabled_chain
+                .iter()
+                .map(|(name, _)| name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["openrouter", "openai", "lmstudio"],
+            "enabled fallback_enabled must include configured fallback providers in order"
+        );
+    }
+
+    #[test]
     fn resilient_provider_errors_for_invalid_primary() {
         let reliability = crate::config::ReliabilityConfig::default();
         let provider = create_resilient_provider(
@@ -3095,6 +3183,7 @@ mod tests {
         let reliability = crate::config::ReliabilityConfig {
             provider_retries: 1,
             provider_backoff_ms: 100,
+            fallback_enabled: true,
             fallback_providers: vec!["lmstudio".into(), "ollama".into()],
             fallback_api_keys: std::collections::HashMap::new(),
             model_fallbacks: std::collections::HashMap::new(),
@@ -3118,6 +3207,7 @@ mod tests {
         let reliability = crate::config::ReliabilityConfig {
             provider_retries: 1,
             provider_backoff_ms: 100,
+            fallback_enabled: true,
             fallback_providers: vec!["custom:http://host.docker.internal:1234/v1".into()],
             fallback_api_keys: std::collections::HashMap::new(),
             model_fallbacks: std::collections::HashMap::new(),
@@ -3140,6 +3230,7 @@ mod tests {
         let reliability = crate::config::ReliabilityConfig {
             provider_retries: 1,
             provider_backoff_ms: 100,
+            fallback_enabled: true,
             fallback_providers: vec![
                 "deepseek".into(),
                 "custom:http://localhost:8080/v1".into(),
@@ -3178,6 +3269,7 @@ mod tests {
         let reliability = crate::config::ReliabilityConfig {
             provider_retries: 1,
             provider_backoff_ms: 100,
+            fallback_enabled: true,
             fallback_providers: vec!["osaurus".into(), "lmstudio".into()],
             fallback_api_keys: std::collections::HashMap::new(),
             model_fallbacks: std::collections::HashMap::new(),
@@ -3721,6 +3813,7 @@ mod tests {
         let reliability = crate::config::ReliabilityConfig {
             provider_retries: 1,
             provider_backoff_ms: 100,
+            fallback_enabled: true,
             fallback_providers: vec!["openai-codex:second".into()],
             fallback_api_keys: std::collections::HashMap::new(),
             model_fallbacks: std::collections::HashMap::new(),
@@ -3746,6 +3839,7 @@ mod tests {
         let reliability = crate::config::ReliabilityConfig {
             provider_retries: 1,
             provider_backoff_ms: 100,
+            fallback_enabled: true,
             fallback_providers: vec![
                 "openai-codex:second".into(),
                 "custom:http://localhost:8080/v1".into(),
