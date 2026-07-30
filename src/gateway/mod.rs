@@ -648,6 +648,12 @@ pub async fn run_gateway(
         .route("/api/memory", get(api::handle_api_memory_list))
         .route("/api/memory", post(api::handle_api_memory_store))
         .route("/api/memory/{key}", delete(api::handle_api_memory_delete))
+        .route(
+            "/api/estop",
+            get(api::handle_api_estop_get),
+        )
+        .route("/api/estop/engage", post(api::handle_api_estop_engage))
+        .route("/api/estop/resume", post(api::handle_api_estop_resume))
         .route("/api/pairing/initiate", post(api::handle_api_pairing_initiate))
         .route("/api/pairing/devices", get(api::handle_api_pairing_devices))
         .route(
@@ -3377,6 +3383,156 @@ Screenshot captured successfully."#;
         assert_eq!(
             response.headers().get(header::X_FRAME_OPTIONS).unwrap(),
             "DENY"
+        );
+    }
+
+    // ── Emergency stop (estop) API ───────────────────────────────
+
+    fn estop_test_app_state(config: Config, pairing: Arc<PairingGuard>) -> AppState {
+        AppState {
+            config: Arc::new(Mutex::new(config)),
+            provider: Arc::new(MockProvider::default()),
+            model: "test-model".into(),
+            temperature: 0.0,
+            mem: Arc::new(MockMemory),
+            auto_save: false,
+            webhook_secret_hash: None,
+            pairing,
+            trust_forwarded_headers: false,
+            rate_limiter: Arc::new(GatewayRateLimiter::new(100, 100, 100)),
+            idempotency_store: Arc::new(IdempotencyStore::new(Duration::from_secs(300), 1000)),
+            observer: Arc::new(crate::observability::NoopObserver),
+            tools_registry: Arc::new(Vec::new()),
+            tools_registry_exec: Arc::new(Vec::new()),
+            multimodal: crate::config::MultimodalConfig::default(),
+            max_tool_iterations: 10,
+            cost_tracker: None,
+            event_tx: tokio::sync::broadcast::channel(16).0,
+            runtime_trace_path: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn handle_api_estop_get_returns_conflict_when_disabled() {
+        let config = Config::default();
+        assert!(!config.security.estop.enabled);
+        let state = estop_test_app_state(config, Arc::new(PairingGuard::new(false, &[], None)));
+
+        let response = api::handle_api_estop_get(State(state), HeaderMap::new())
+            .await
+            .into_response();
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+    }
+
+    #[tokio::test]
+    async fn handle_api_estop_engage_requires_bearer_token_when_pairing_enabled() {
+        let config = Config::default();
+        let state = estop_test_app_state(config, Arc::new(PairingGuard::new(true, &[], None)));
+
+        let body = api::EstopEngageBody {
+            level: "kill-all".into(),
+            domains: vec![],
+            tools: vec![],
+        };
+        let response = api::handle_api_estop_engage(State(state), HeaderMap::new(), Json(body))
+            .await
+            .into_response();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn handle_api_estop_resume_requires_otp_when_configured() {
+        let guard = crate::security::estop::test_support::reset_and_get();
+        guard
+            .engage(crate::security::EstopLevel::KillAll)
+            .expect("engage kill-all for test setup");
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut config = Config::default();
+        config.config_path = dir.path().join("config.toml");
+        config.secrets.encrypt = true;
+        config.security.estop.enabled = true;
+        config.security.estop.require_otp_to_resume = true;
+        config.security.otp.enabled = true;
+        let state = estop_test_app_state(config, Arc::new(PairingGuard::new(false, &[], None)));
+
+        let body = api::EstopResumeBody {
+            network: false,
+            domains: vec![],
+            tools: vec![],
+            otp_code: None,
+        };
+        let response = api::handle_api_estop_resume(State(state), HeaderMap::new(), Json(body))
+            .await
+            .into_response();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+        let payload = response.into_body().collect().await.unwrap().to_bytes();
+        let text = String::from_utf8(payload.to_vec()).unwrap();
+        assert!(text.contains("OTP"));
+    }
+
+    #[tokio::test]
+    async fn handle_api_estop_resume_accepts_valid_otp_code() {
+        let _guard = crate::security::estop::test_support::reset_and_get();
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let config_dir = dir.path().to_path_buf();
+        let mut config = Config::default();
+        config.config_path = config_dir.join("config.toml");
+        config.secrets.encrypt = true;
+        config.security.estop.enabled = true;
+        config.security.estop.require_otp_to_resume = true;
+        config.security.otp.enabled = true;
+        let state = estop_test_app_state(
+            config.clone(),
+            Arc::new(PairingGuard::new(false, &[], None)),
+        );
+
+        let engage_body = api::EstopEngageBody {
+            level: "kill-all".into(),
+            domains: vec![],
+            tools: vec![],
+        };
+        let engage_response =
+            api::handle_api_estop_engage(State(state.clone()), HeaderMap::new(), Json(engage_body))
+                .await
+                .into_response();
+        assert_eq!(engage_response.status(), StatusCode::OK);
+        assert!(
+            crate::security::estop_guard()
+                .expect("guard registered")
+                .status()
+                .kill_all
+        );
+
+        // Compute a valid OTP code via the same secret store/dir the handler reads from.
+        let store = crate::security::SecretStore::new(&config_dir, config.secrets.encrypt);
+        let (validator, _) =
+            crate::security::OtpValidator::from_config(&config.security.otp, &config_dir, &store)
+                .expect("build otp validator");
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system time")
+            .as_secs();
+        let code = validator.code_for_timestamp(now);
+
+        let resume_body = api::EstopResumeBody {
+            network: false,
+            domains: vec![],
+            tools: vec![],
+            otp_code: Some(code),
+        };
+        let resume_response =
+            api::handle_api_estop_resume(State(state), HeaderMap::new(), Json(resume_body))
+                .await
+                .into_response();
+        assert_eq!(resume_response.status(), StatusCode::OK);
+        assert!(
+            !crate::security::estop_guard()
+                .expect("guard registered")
+                .status()
+                .kill_all
         );
     }
 }

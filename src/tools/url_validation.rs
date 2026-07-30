@@ -59,6 +59,11 @@ fn enforce_global_domain_access_policy(
 ) -> Result<()> {
     let config = url_access.cloned().unwrap_or_default();
 
+    if let Some(reason) = crate::security::estop_guard().and_then(|guard| guard.check_domain(host))
+    {
+        anyhow::bail!(reason);
+    }
+
     if host_matches_allowlist(host, &config.domain_blocklist) {
         anyhow::bail!("Host '{host}' is blocked by security.url_access.domain_blocklist");
     }
@@ -662,5 +667,39 @@ mod tests {
         };
         let got = validate_url("https://docs.rs", &policy).unwrap();
         assert_eq!(got, "https://docs.rs");
+    }
+
+    // ── Emergency stop enforcement ────────────────────────────────
+
+    #[test]
+    fn validate_url_blocked_by_estop_domain_block() {
+        let guard = crate::security::estop::test_support::reset_and_get();
+        guard
+            .engage(crate::security::EstopLevel::DomainBlock(vec![
+                "example.com".into(),
+            ]))
+            .unwrap();
+
+        let allowed = vec!["*".to_string()];
+        let blocked: Vec<String> = Vec::new();
+        let err = validate_url("https://example.com", &policy(&allowed, &blocked))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("emergency stop"));
+    }
+
+    #[test]
+    fn validate_url_blocked_by_estop_network_kill() {
+        let guard = crate::security::estop::test_support::reset_and_get();
+        guard
+            .engage(crate::security::EstopLevel::NetworkKill)
+            .unwrap();
+
+        let allowed = vec!["*".to_string()];
+        let blocked: Vec<String> = Vec::new();
+        let err = validate_url("https://example.com", &policy(&allowed, &blocked))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("network-kill"));
     }
 }

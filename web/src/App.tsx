@@ -14,6 +14,7 @@ import Cost from './pages/Cost';
 import MissionControl from './pages/MissionControl';
 import Doctor from './pages/Doctor';
 import Workspace from './pages/Workspace';
+import Estop from './pages/Estop';
 import { AuthProvider, useAuth } from './hooks/useAuth';
 import { coerceLocale, setLocale, type Locale } from './lib/i18n';
 
@@ -151,6 +152,7 @@ function AppContent() {
           <Route path="/mission-control" element={<MissionControl />} />
           <Route path="/doctor" element={<Doctor />} />
           <Route path="/workspace" element={<Workspace />} />
+          <Route path="/estop" element={<Estop />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Route>
       </Routes>

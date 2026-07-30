@@ -35,6 +35,7 @@ const translations: Record<Locale, Record<string, string>> = {
     'nav.logs': 'Mission Control',
     'nav.doctor': 'Doctor',
     'nav.workspace': 'Workspace',
+    'nav.estop': 'Emergency Stop',
 
     // Dashboard
     'dashboard.title': 'Dashboard',

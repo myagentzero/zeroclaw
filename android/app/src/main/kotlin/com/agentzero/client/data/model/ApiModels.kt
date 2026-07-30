@@ -175,6 +175,40 @@ data class SseEvent(
     val model: String? = null,
     val iteration: Int? = null,
     val payload: JsonObject? = null,
+    // Emergency-stop live status fields, present when type == "estop_status".
+    @SerialName("is_engaged") val isEngaged: Boolean? = null,
+    @SerialName("kill_all") val killAll: Boolean? = null,
+    @SerialName("network_kill") val networkKill: Boolean? = null,
+    @SerialName("blocked_domains") val blockedDomains: List<String>? = null,
+    @SerialName("frozen_tools") val frozenTools: List<String>? = null,
+    @SerialName("updated_at") val updatedAt: String? = null,
+)
+
+@Serializable
+data class EstopStatus(
+    val enabled: Boolean = false,
+    @SerialName("is_engaged") val isEngaged: Boolean = false,
+    @SerialName("kill_all") val killAll: Boolean = false,
+    @SerialName("network_kill") val networkKill: Boolean = false,
+    @SerialName("blocked_domains") val blockedDomains: List<String> = emptyList(),
+    @SerialName("frozen_tools") val frozenTools: List<String> = emptyList(),
+    @SerialName("updated_at") val updatedAt: String? = null,
+    @SerialName("require_otp_to_resume") val requireOtpToResume: Boolean = false,
+)
+
+@Serializable
+data class EstopEngageBody(
+    val level: String,
+    val domains: List<String> = emptyList(),
+    val tools: List<String> = emptyList(),
+)
+
+@Serializable
+data class EstopResumeBody(
+    val network: Boolean = false,
+    val domains: List<String> = emptyList(),
+    val tools: List<String> = emptyList(),
+    @SerialName("otp_code") val otpCode: String? = null,
 )
 
 data class ChatMessage(

@@ -1,8 +1,9 @@
-import { useLocation } from 'react-router-dom';
-import { LogOut, Menu, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
+import { useLocation, Link } from 'react-router-dom';
+import { LogOut, Menu, PanelLeftClose, PanelLeftOpen, OctagonAlert } from 'lucide-react';
 import { t, LANGUAGE_BUTTON_LABELS, LANGUAGE_SWITCH_ORDER } from '@/lib/i18n';
 import { useLocaleContext } from '@/App';
 import { useAuth } from '@/hooks/useAuth';
+import { useEstopStatus } from '@/hooks/useEstopStatus';
 
 const routeTitles: Record<string, string> = {
   '/': 'nav.dashboard',
@@ -19,6 +20,7 @@ const routeTitles: Record<string, string> = {
   '/mission-control': 'nav.logs',
   '/doctor': 'nav.doctor',
   '/workspace': 'nav.workspace',
+  '/estop': 'nav.estop',
 };
 
 const languageSummary = 'English · 简体中文 · 日本語 · Русский · Français · Tiếng Việt · Ελληνικά';
@@ -37,6 +39,7 @@ export default function Header({
   const location = useLocation();
   const { logout } = useAuth();
   const { locale, setAppLocale } = useLocaleContext();
+  const { status: estopStatus } = useEstopStatus();
 
   const titleKey = routeTitles[location.pathname] ?? 'nav.dashboard';
   const pageTitle = t(titleKey);
@@ -73,6 +76,16 @@ export default function Header({
       </div>
 
       <div className="relative flex w-full items-center justify-end gap-1.5 sm:gap-2 md:w-auto md:gap-3">
+        {estopStatus?.is_engaged && (
+          <Link
+            to="/estop"
+            className="flex items-center gap-1.5 rounded-lg border border-red-700/60 bg-red-900/40 px-2.5 py-1.5 text-xs font-semibold text-red-300 transition hover:border-red-500 hover:text-white animate-pulse sm:px-3 sm:text-sm"
+            title="Emergency stop is engaged"
+          >
+            <OctagonAlert className="h-4 w-4" />
+            <span className="hidden sm:inline">Estop Engaged</span>
+          </Link>
+        )}
         <button
           type="button"
           onClick={onToggleSidebarCollapse}

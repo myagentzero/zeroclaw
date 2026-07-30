@@ -970,6 +970,24 @@ pub(crate) fn is_tool_loop_cancelled(err: &anyhow::Error) -> bool {
     err.chain().any(|source| source.is::<ToolLoopCancelled>())
 }
 
+/// Raised when a new agent turn (or an in-progress turn's next iteration)
+/// is aborted because emergency stop (kill-all) is engaged. The message is
+/// already user-facing; callers can surface `err.to_string()` directly.
+#[derive(Debug)]
+pub(crate) struct EstopEngaged(pub String);
+
+impl std::fmt::Display for EstopEngaged {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for EstopEngaged {}
+
+pub(crate) fn is_estop_engaged_error(err: &anyhow::Error) -> bool {
+    err.chain().any(|source| source.is::<EstopEngaged>())
+}
+
 pub(crate) fn is_tool_iteration_limit_error(err: &anyhow::Error) -> bool {
     err.chain().any(|source| {
         source
@@ -1270,6 +1288,11 @@ pub async fn run_tool_call_loop(
             .is_some_and(CancellationToken::is_cancelled)
         {
             return Err(ToolLoopCancelled.into());
+        }
+        if let Some(reason) =
+            crate::security::estop_guard().and_then(|guard| guard.check_turn_allowed())
+        {
+            return Err(EstopEngaged(reason).into());
         }
 
         let image_marker_count = multimodal::count_image_markers(history);
@@ -4234,6 +4257,44 @@ mod tests {
         assert!(err.to_string().contains("provider_capability_error"));
         assert!(err.to_string().contains("capability=vision"));
         assert_eq!(calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn run_tool_call_loop_aborts_before_provider_call_when_kill_all_engaged() {
+        let guard = crate::security::estop::test_support::reset_and_get();
+        guard.engage(crate::security::EstopLevel::KillAll).unwrap();
+
+        // No scripted responses: if the estop check didn't run before the
+        // provider call, `ScriptedProvider::chat` would panic on an empty
+        // queue instead of returning our expected error.
+        let provider = ScriptedProvider::from_scripted_responses(Vec::new());
+        let mut history = vec![ChatMessage::user("hello".to_string())];
+        let tools_registry: Vec<Box<dyn Tool>> = Vec::new();
+        let observer = NoopObserver;
+
+        let err = run_tool_call_loop(
+            &provider,
+            &mut history,
+            &tools_registry,
+            &observer,
+            "mock-provider",
+            "mock-model",
+            0.0,
+            true,
+            None,
+            "cli",
+            &crate::config::MultimodalConfig::default(),
+            3,
+            None,
+            None,
+            None,
+            &[],
+        )
+        .await
+        .expect_err("kill-all should abort the turn before contacting the provider");
+
+        assert!(is_estop_engaged_error(&err));
+        assert!(err.to_string().contains("kill-all"));
     }
 
     #[tokio::test]

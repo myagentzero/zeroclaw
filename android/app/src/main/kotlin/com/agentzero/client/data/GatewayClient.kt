@@ -4,6 +4,9 @@ import com.agentzero.client.data.model.CostSummary
 import com.agentzero.client.data.model.CronAddBody
 import com.agentzero.client.data.model.CronJob
 import com.agentzero.client.data.model.DiagResult
+import com.agentzero.client.data.model.EstopEngageBody
+import com.agentzero.client.data.model.EstopResumeBody
+import com.agentzero.client.data.model.EstopStatus
 import com.agentzero.client.data.model.MemoryEntry
 import com.agentzero.client.data.model.MemoryStoreBody
 import com.agentzero.client.data.model.PairedDevice
@@ -159,6 +162,38 @@ class GatewayClient(
     suspend fun runDoctor(config: ServerConfig): List<DiagResult> {
         val body = post(config, "/api/doctor", "{}", auth = true)
         return unwrapList(body, "results", DiagResult.serializer())
+    }
+
+    suspend fun getEstopStatus(config: ServerConfig): EstopStatus =
+        getJson(config, "/api/estop", auth = true, EstopStatus.serializer())
+
+    suspend fun engageEstop(
+        config: ServerConfig,
+        level: String,
+        domains: List<String> = emptyList(),
+        tools: List<String> = emptyList(),
+    ): EstopStatus {
+        val payload = json.encodeToString(
+            EstopEngageBody.serializer(),
+            EstopEngageBody(level = level, domains = domains, tools = tools),
+        )
+        val body = post(config, "/api/estop/engage", payload, auth = true)
+        return json.decodeFromString(EstopStatus.serializer(), body)
+    }
+
+    suspend fun resumeEstop(
+        config: ServerConfig,
+        network: Boolean = false,
+        domains: List<String> = emptyList(),
+        tools: List<String> = emptyList(),
+        otpCode: String? = null,
+    ): EstopStatus {
+        val payload = json.encodeToString(
+            EstopResumeBody.serializer(),
+            EstopResumeBody(network = network, domains = domains, tools = tools, otpCode = otpCode),
+        )
+        val body = post(config, "/api/estop/resume", payload, auth = true)
+        return json.decodeFromString(EstopStatus.serializer(), body)
     }
 
     private suspend inline fun <reified T> getJson(

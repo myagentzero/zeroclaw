@@ -195,6 +195,19 @@ Notes:
 - Estop state is persisted atomically and reloaded on startup.
 - Corrupted/unreadable estop state falls back to fail-closed `kill_all`.
 - Use CLI command `agentzero estop` to engage and `agentzero estop resume` to clear levels.
+- Enforcement is live: the gateway, daemon, and CLI all consult the same on-disk state (via an mtime-cached `EstopGuard`) before each agent turn, before each tool call, and on every outbound URL fetch — so an estop engaged from any client takes effect on any other running process within seconds, without a restart.
+
+### HTTP API / WebUI / Android
+
+When `[security.estop].enabled = true`, the gateway exposes the same estop controls used by the CLI over HTTP, so the WebUI (`/estop` page) and the Android app (Estop screen) can engage/resume estop and see live status without shelling into the host:
+
+| Method & path | Purpose |
+|---|---|
+| `GET /api/estop` | Current `EstopState` plus config flags (`enabled`, `require_otp_to_resume`) |
+| `POST /api/estop/engage` | Engage a level (`kill-all`, `network-kill`, `domain-block`, `tool-freeze`) with optional `domains`/`tools` lists |
+| `POST /api/estop/resume` | Resume `kill_all`, `network`, specific `domains`, or specific `tools`; requires `otp_code` when `require_otp_to_resume = true` |
+
+All three routes require the gateway's usual bearer-token auth (`require_auth`) and return `409 Conflict` if estop is disabled in config. Every successful engage/resume broadcasts an `estop_status` event on the existing `/api/events` SSE stream, which both the WebUI header and the Android app's global banner subscribe to for real-time status.
 
 ## `[agents.<name>]`
 

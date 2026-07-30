@@ -1,6 +1,7 @@
 package com.agentzero.client.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -23,6 +24,7 @@ import androidx.compose.material.icons.filled.MonitorHeart
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.WarningAmber
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DrawerValue
@@ -36,12 +38,15 @@ import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.NavigationDrawerItem
 import androidx.compose.material3.NavigationDrawerItemDefaults
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -52,11 +57,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 import com.agentzero.client.AppContainer
+import com.agentzero.client.data.SseEventClient
 import com.agentzero.client.data.model.ServerConfig
 import com.agentzero.client.ui.screens.AgentChatScreen
 import com.agentzero.client.ui.screens.DashboardScreen
 import com.agentzero.client.ui.screens.DevicesScreen
 import com.agentzero.client.ui.screens.DoctorScreen
+import com.agentzero.client.ui.screens.EstopScreen
 import com.agentzero.client.ui.screens.MemoryScreen
 import com.agentzero.client.ui.screens.MissionControlScreen
 import com.agentzero.client.ui.screens.ScheduledJobsScreen
@@ -76,6 +83,7 @@ enum class MainDestination(
     Workspace("Workspace", Icons.Default.Folder),
     Devices("Devices", Icons.Default.Devices),
     Doctor("Doctor", Icons.Default.MedicalServices),
+    Estop("Emergency Stop", Icons.Default.WarningAmber),
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -88,8 +96,27 @@ fun MainShell(
 ) {
     var destination by remember { mutableStateOf(MainDestination.Dashboard) }
     var showSettings by remember { mutableStateOf(false) }
+    var estopEngaged by remember { mutableStateOf(false) }
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
+
+    // Keep a lightweight, always-on view of emergency-stop status so the
+    // banner below the top bar reflects reality regardless of which
+    // destination is currently selected.
+    LaunchedEffect(config) {
+        runCatching { container.gatewayClient.getEstopStatus(config) }
+            .onSuccess { estopEngaged = it.isEngaged }
+    }
+    DisposableEffect(config) {
+        val job = scope.launch {
+            container.sseEventClient.connect(config).collect { event ->
+                if (event is SseEventClient.SseConnectionEvent.Event && event.event.type == "estop_status") {
+                    estopEngaged = event.event.isEngaged == true
+                }
+            }
+        }
+        onDispose { job.cancel() }
+    }
 
     ModalNavigationDrawer(
         drawerState = drawerState,
@@ -136,16 +163,22 @@ fun MainShell(
                 )
             },
         ) { padding ->
-            Box(Modifier.fillMaxSize().padding(padding)) {
-                when (destination) {
-                    MainDestination.Dashboard -> DashboardScreen(config, container)
-                    MainDestination.AgentChat -> AgentChatScreen(config, container)
-                    MainDestination.MissionControl -> MissionControlScreen(config, container)
-                    MainDestination.Memory -> MemoryScreen(config, container)
-                    MainDestination.ScheduledJobs -> ScheduledJobsScreen(config, container)
-                    MainDestination.Workspace -> WorkspaceScreen(config, container)
-                    MainDestination.Devices -> DevicesScreen(config, container)
-                    MainDestination.Doctor -> DoctorScreen(config, container)
+            Column(Modifier.fillMaxSize().padding(padding)) {
+                if (estopEngaged && destination != MainDestination.Estop) {
+                    EstopBanner(onClick = { destination = MainDestination.Estop })
+                }
+                Box(Modifier.fillMaxSize()) {
+                    when (destination) {
+                        MainDestination.Dashboard -> DashboardScreen(config, container)
+                        MainDestination.AgentChat -> AgentChatScreen(config, container)
+                        MainDestination.MissionControl -> MissionControlScreen(config, container)
+                        MainDestination.Memory -> MemoryScreen(config, container)
+                        MainDestination.ScheduledJobs -> ScheduledJobsScreen(config, container)
+                        MainDestination.Workspace -> WorkspaceScreen(config, container)
+                        MainDestination.Devices -> DevicesScreen(config, container)
+                        MainDestination.Doctor -> DoctorScreen(config, container)
+                        MainDestination.Estop -> EstopScreen(config, container)
+                    }
                 }
             }
         }
@@ -219,6 +252,36 @@ private fun DrawerHeader(config: ServerConfig) {
                 config.baseUrl,
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+@Composable
+private fun EstopBanner(onClick: () -> Unit) {
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = Spacing.md, vertical = Spacing.xs),
+        color = MaterialTheme.colorScheme.errorContainer,
+        shape = MaterialTheme.shapes.medium,
+        onClick = onClick,
+    ) {
+        Row(
+            Modifier.padding(horizontal = Spacing.md, vertical = Spacing.sm),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(Spacing.sm),
+        ) {
+            Icon(
+                Icons.Default.WarningAmber,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onErrorContainer,
+                modifier = Modifier.size(18.dp),
+            )
+            Text(
+                "Emergency stop is engaged — tap for details",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onErrorContainer,
             )
         }
     }

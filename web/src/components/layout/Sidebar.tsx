@@ -15,6 +15,7 @@ import {
   Activity,
   Stethoscope,
   FolderOpen,
+  OctagonAlert,
   X,
 } from 'lucide-react';
 import { t } from '@/lib/i18n';
@@ -35,6 +36,7 @@ const navItems = [
   { to: '/devices', icon: Smartphone, labelKey: 'nav.devices' },
   { to: '/config', icon: Settings, labelKey: 'nav.config' },
   { to: '/doctor', icon: Stethoscope, labelKey: 'nav.doctor' },
+  { to: '/estop', icon: OctagonAlert, labelKey: 'nav.estop' },
 ];
 
 interface SidebarProps {

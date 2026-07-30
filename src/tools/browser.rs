@@ -452,6 +452,12 @@ impl BrowserTool {
 
         let host = extract_host(url)?;
 
+        if let Some(reason) =
+            crate::security::estop_guard().and_then(|guard| guard.check_domain(&host))
+        {
+            anyhow::bail!(reason);
+        }
+
         if is_private_host(&host) {
             anyhow::bail!("Blocked local/private host: {host}");
         }
@@ -2213,6 +2219,40 @@ mod tests {
             tool.validate_url("https://[::ffff:10.0.0.1]:8080/")
                 .is_err()
         );
+    }
+
+    #[test]
+    fn validate_url_blocked_by_estop_domain_block() {
+        let guard = crate::security::estop::test_support::reset_and_get();
+        guard
+            .engage(crate::security::EstopLevel::DomainBlock(vec![
+                "*.chase.com".into(),
+            ]))
+            .unwrap();
+
+        let security = Arc::new(SecurityPolicy::default());
+        let tool = BrowserTool::new(security, vec!["*".into()], None);
+        let err = tool
+            .validate_url("https://secure.chase.com/")
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("emergency stop"));
+    }
+
+    #[test]
+    fn validate_url_blocked_by_estop_network_kill() {
+        let guard = crate::security::estop::test_support::reset_and_get();
+        guard
+            .engage(crate::security::EstopLevel::NetworkKill)
+            .unwrap();
+
+        let security = Arc::new(SecurityPolicy::default());
+        let tool = BrowserTool::new(security, vec!["*".into()], None);
+        let err = tool
+            .validate_url("https://example.com/")
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("network-kill"));
     }
 
     #[test]

@@ -13,6 +13,7 @@ import type {
   SkillSummary,
   WorkspaceTree,
   WorkspaceFileContent,
+  EstopStatus,
 } from '../types/api';
 import { clearToken, getToken, setToken } from './auth';
 
@@ -282,6 +283,43 @@ export function initiateDevicePairing(): Promise<string> {
   return apiFetch<{ pairing_code: string }>('/api/pairing/initiate', { method: 'POST' }).then(
     (data) => data.pairing_code,
   );
+}
+
+// ---------------------------------------------------------------------------
+// Emergency stop (estop)
+// ---------------------------------------------------------------------------
+
+export function getEstopStatus(): Promise<EstopStatus> {
+  return apiFetch<EstopStatus>('/api/estop');
+}
+
+export type EstopEngageLevel = 'kill-all' | 'network-kill' | 'domain-block' | 'tool-freeze';
+
+export function engageEstop(
+  level: EstopEngageLevel,
+  opts: { domains?: string[]; tools?: string[] } = {},
+): Promise<EstopStatus> {
+  return apiFetch<EstopStatus>('/api/estop/engage', {
+    method: 'POST',
+    body: JSON.stringify({ level, domains: opts.domains ?? [], tools: opts.tools ?? [] }),
+  });
+}
+
+export function resumeEstop(opts: {
+  network?: boolean;
+  domains?: string[];
+  tools?: string[];
+  otpCode?: string;
+} = {}): Promise<EstopStatus> {
+  return apiFetch<EstopStatus>('/api/estop/resume', {
+    method: 'POST',
+    body: JSON.stringify({
+      network: opts.network ?? false,
+      domains: opts.domains ?? [],
+      tools: opts.tools ?? [],
+      otp_code: opts.otpCode,
+    }),
+  });
 }
 
 // ---------------------------------------------------------------------------

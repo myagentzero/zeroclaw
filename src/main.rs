@@ -986,6 +986,22 @@ async fn main() -> Result<()> {
         }
     }
 
+    // Register the process-wide estop guard (if enabled) before any command
+    // runs, so the agent tool loop, gateway API, and channels/daemon all
+    // enforce the same live emergency-stop state regardless of subcommand.
+    if config.security.estop.enabled {
+        let config_dir = config
+            .config_path
+            .parent()
+            .context("Config path must have a parent directory")?;
+        match security::EstopGuard::load(&config.security.estop, config_dir) {
+            Ok(guard) => security::init_estop_guard(std::sync::Arc::new(guard)),
+            Err(error) => {
+                tracing::warn!("Failed to initialize estop guard; enforcement disabled: {error}");
+            }
+        }
+    }
+
     match cli.command {
         Commands::Onboard { .. } => unreachable!(),
 

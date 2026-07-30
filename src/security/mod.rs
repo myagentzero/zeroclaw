@@ -50,7 +50,10 @@ pub use canary_guard::CanaryGuard;
 pub use detect::create_sandbox;
 pub use domain_matcher::DomainMatcher;
 #[allow(unused_imports)]
-pub use estop::{EstopLevel, EstopManager, EstopState, ResumeSelector};
+pub use estop::{
+    EstopGuard, EstopLevel, EstopManager, EstopState, ResumeSelector, global_guard as estop_guard,
+    init_global_guard as init_estop_guard,
+};
 #[allow(unused_imports)]
 pub use otp::OtpValidator;
 #[allow(unused_imports)]

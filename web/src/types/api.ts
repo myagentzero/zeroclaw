@@ -187,6 +187,17 @@ export interface WorkspaceFileContent {
   encoding?: 'utf-8' | 'base64';
 }
 
+export interface EstopStatus {
+  enabled: boolean;
+  is_engaged: boolean;
+  kill_all: boolean;
+  network_kill: boolean;
+  blocked_domains: string[];
+  frozen_tools: string[];
+  updated_at?: string | null;
+  require_otp_to_resume: boolean;
+}
+
 export interface SSEEvent {
   type: string;
   timestamp?: string;

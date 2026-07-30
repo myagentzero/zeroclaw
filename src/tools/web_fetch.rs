@@ -425,6 +425,11 @@ fn validate_target_url(
 
     let host = extract_host(url)?;
 
+    if let Some(reason) = crate::security::estop_guard().and_then(|guard| guard.check_domain(&host))
+    {
+        anyhow::bail!(reason);
+    }
+
     // blocked_domains always takes precedence
     if host_matches_allowlist(&host, blocked_domains) {
         anyhow::bail!("Host '{host}' is in {tool_name}.blocked_domains");
@@ -821,6 +826,40 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(err.contains("allowed_domains"));
+    }
+
+    // ── Emergency stop enforcement ────────────────────────────────
+
+    #[test]
+    fn validate_blocked_by_estop_domain_block() {
+        let guard = crate::security::estop::test_support::reset_and_get();
+        guard
+            .engage(crate::security::EstopLevel::DomainBlock(vec![
+                "example.com".into(),
+            ]))
+            .unwrap();
+
+        let tool = test_tool(vec!["*"]);
+        let err = tool
+            .validate_url("https://example.com")
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("emergency stop"));
+    }
+
+    #[test]
+    fn validate_blocked_by_estop_network_kill() {
+        let guard = crate::security::estop::test_support::reset_and_get();
+        guard
+            .engage(crate::security::EstopLevel::NetworkKill)
+            .unwrap();
+
+        let tool = test_tool(vec!["*"]);
+        let err = tool
+            .validate_url("https://example.com")
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("network-kill"));
     }
 
     // ── SSRF protection ──────────────────────────────────────────

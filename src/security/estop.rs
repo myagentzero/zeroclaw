@@ -2,9 +2,11 @@ use crate::config::EstopConfig;
 use crate::security::domain_matcher::DomainMatcher;
 use crate::security::otp::OtpValidator;
 use anyhow::{Context, Result};
+use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -297,6 +299,271 @@ fn now_rfc3339() -> String {
         .to_rfc3339()
 }
 
+/// Tool names treated as network-capable for `network_kill` enforcement.
+/// Best-effort static allowlist; MCP-routed tools use dynamic
+/// `<server>__<tool>` names and are not covered by this classification.
+const NETWORK_TOOL_NAMES: &[&str] = &[
+    "web_fetch",
+    "http_request",
+    "browser",
+    "web_search_tool",
+    "github",
+    "jira",
+    "confluence",
+    "servicenow",
+    "notion",
+    "weather",
+    "composio",
+    "ess_query",
+    "delegate",
+    "subagent_spawn",
+    "provider_status",
+];
+
+fn is_network_tool(normalized_name: &str) -> bool {
+    NETWORK_TOOL_NAMES.contains(&normalized_name)
+}
+
+fn file_mtime(path: &Path) -> Option<SystemTime> {
+    fs::metadata(path).and_then(|meta| meta.modified()).ok()
+}
+
+struct GuardState {
+    manager: EstopManager,
+    last_mtime: Option<SystemTime>,
+}
+
+/// Live, shareable handle onto an [`EstopManager`] for use by the running
+/// agent runtime (tool loop, gateway, channels, daemon).
+///
+/// Unlike `EstopManager` — which is loaded fresh for each `agentzero estop`
+/// CLI invocation and then dropped — `EstopGuard` is constructed once per
+/// long-lived process and cheaply re-reads the on-disk state whenever its
+/// mtime changes. This lets a separate `agentzero estop` CLI invocation (a
+/// different OS process) take effect in an already-running gateway/daemon
+/// without a restart, and without a file-watcher dependency.
+pub struct EstopGuard {
+    config: EstopConfig,
+    config_dir: PathBuf,
+    inner: Mutex<GuardState>,
+}
+
+impl EstopGuard {
+    pub fn load(config: &EstopConfig, config_dir: &Path) -> Result<Self> {
+        let manager = EstopManager::load(config, config_dir)?;
+        let last_mtime = file_mtime(manager.state_path());
+        Ok(Self {
+            config: config.clone(),
+            config_dir: config_dir.to_path_buf(),
+            inner: Mutex::new(GuardState {
+                manager,
+                last_mtime,
+            }),
+        })
+    }
+
+    fn refresh_locked(&self, guard: &mut GuardState) {
+        let current_mtime = file_mtime(guard.manager.state_path());
+        if current_mtime == guard.last_mtime {
+            return;
+        }
+        if let Ok(reloaded) = EstopManager::load(&self.config, &self.config_dir) {
+            guard.manager = reloaded;
+        }
+        guard.last_mtime = current_mtime;
+    }
+
+    pub fn status(&self) -> EstopState {
+        let mut guard = self.inner.lock();
+        self.refresh_locked(&mut guard);
+        guard.manager.status()
+    }
+
+    pub fn engage(&self, level: EstopLevel) -> Result<()> {
+        let mut guard = self.inner.lock();
+        self.refresh_locked(&mut guard);
+        guard.manager.engage(level)?;
+        guard.last_mtime = file_mtime(guard.manager.state_path());
+        Ok(())
+    }
+
+    pub fn resume(
+        &self,
+        selector: ResumeSelector,
+        otp_code: Option<&str>,
+        otp_validator: Option<&OtpValidator>,
+    ) -> Result<()> {
+        let mut guard = self.inner.lock();
+        self.refresh_locked(&mut guard);
+        guard.manager.resume(selector, otp_code, otp_validator)?;
+        guard.last_mtime = file_mtime(guard.manager.state_path());
+        Ok(())
+    }
+
+    /// Returns a refusal reason if a new agent turn must not start
+    /// (kill-all engaged), or `None` if the turn may proceed.
+    pub fn check_turn_allowed(&self) -> Option<String> {
+        let state = self.status();
+        if state.kill_all {
+            Some(
+                "Emergency stop engaged (kill-all). This agent turn was aborted before \
+                 contacting the model provider. Resume via `agentzero estop resume`, the \
+                 WebUI, or the Android app."
+                    .to_string(),
+            )
+        } else {
+            None
+        }
+    }
+
+    /// Returns a refusal reason if the named tool must not execute, or
+    /// `None` if it may proceed.
+    pub fn check_tool(&self, tool_name: &str) -> Option<String> {
+        let state = self.status();
+        let normalized = tool_name.trim().to_ascii_lowercase();
+        if state.kill_all {
+            return Some(format!(
+                "Emergency stop engaged (kill-all); tool '{tool_name}' was not executed."
+            ));
+        }
+        if state
+            .frozen_tools
+            .iter()
+            .any(|frozen| frozen == &normalized)
+        {
+            return Some(format!(
+                "Tool '{tool_name}' is frozen by emergency stop (tool-freeze)."
+            ));
+        }
+        if state.network_kill && is_network_tool(&normalized) {
+            return Some(format!(
+                "Tool '{tool_name}' requires network access, which is disabled by \
+                 emergency stop (network-kill)."
+            ));
+        }
+        None
+    }
+
+    /// Returns a refusal reason if an outbound request to `host` must not
+    /// proceed, or `None` if it may proceed.
+    pub fn check_domain(&self, host: &str) -> Option<String> {
+        let state = self.status();
+        if state.network_kill {
+            return Some(
+                "Network access is disabled by emergency stop (network-kill).".to_string(),
+            );
+        }
+        if state.blocked_domains.is_empty() {
+            return None;
+        }
+        match DomainMatcher::new(&state.blocked_domains, &[]) {
+            Ok(matcher) if matcher.is_gated(host) => Some(format!(
+                "Host '{host}' is blocked by emergency stop (domain-block)."
+            )),
+            _ => None,
+        }
+    }
+}
+
+static GLOBAL_ESTOP_GUARD: OnceLock<Arc<EstopGuard>> = OnceLock::new();
+
+/// Registers the process-wide [`EstopGuard`]. Called once at startup (CLI
+/// `main`, before subcommand dispatch) when `[security.estop].enabled` is
+/// `true`, so the agent tool loop, gateway API, and URL validators can all
+/// enforce a live emergency-stop state without threading it through every
+/// call site. Only the first call takes effect; later calls are ignored.
+pub fn init_global_guard(guard: Arc<EstopGuard>) {
+    let _ = GLOBAL_ESTOP_GUARD.set(guard);
+}
+
+/// Returns the process-wide [`EstopGuard`] if one was registered via
+/// [`init_global_guard`]. Returns `None` when `[security.estop].enabled` is
+/// `false` (the default), so callers should treat `None` as "no restriction."
+///
+/// In test builds this first consults a per-thread override (see
+/// [`test_support`]) so tests that engage estop levels only affect code
+/// running on their own thread — `cargo test` runs many unrelated tests
+/// concurrently on other threads, and those must keep seeing "not engaged".
+pub fn global_guard() -> Option<Arc<EstopGuard>> {
+    #[cfg(test)]
+    {
+        if let Some(guard) = test_support::thread_override() {
+            return Some(guard);
+        }
+    }
+    GLOBAL_ESTOP_GUARD.get().cloned()
+}
+
+/// Test-only helpers for exercising [`EstopGuard`] enforcement from unit
+/// tests in other modules (agent loop, tool execution, URL validators,
+/// gateway) without leaking engaged state to unrelated tests.
+///
+/// `cargo test` runs the whole crate's tests in one binary, many
+/// concurrently on different threads, and most of those tests exercise the
+/// very choke points (`run_tool_call_loop`, `execute_one_tool`, URL
+/// validators) this guard feeds into. A single process-wide `OnceLock`
+/// guard — engaged by one test — would therefore intermittently break
+/// unrelated tests running on other threads at the same moment.
+///
+/// Instead, [`reset_and_get`] installs a fresh [`EstopGuard`] into a
+/// *thread-local* override consulted by [`global_guard`]. Each test's
+/// `#[tokio::test]` body (default: single-threaded runtime) and everything
+/// it calls run on one OS thread, so the override is only ever visible to
+/// that test — never to other tests running concurrently on other threads.
+/// The returned [`ScopedGuard`] clears the override on drop so a later,
+/// unrelated test reusing the same pooled thread doesn't inherit it.
+#[cfg(test)]
+pub(crate) mod test_support {
+    use super::*;
+    use std::cell::RefCell;
+
+    thread_local! {
+        static TEST_GUARD_OVERRIDE: RefCell<Option<Arc<EstopGuard>>> = const { RefCell::new(None) };
+    }
+
+    pub(crate) fn thread_override() -> Option<Arc<EstopGuard>> {
+        TEST_GUARD_OVERRIDE.with(|cell| cell.borrow().clone())
+    }
+
+    /// RAII handle onto this thread's [`EstopGuard`] override that clears it
+    /// when dropped, regardless of test outcome.
+    pub(crate) struct ScopedGuard(Arc<EstopGuard>);
+
+    impl std::ops::Deref for ScopedGuard {
+        type Target = EstopGuard;
+        fn deref(&self) -> &EstopGuard {
+            &self.0
+        }
+    }
+
+    impl Drop for ScopedGuard {
+        fn drop(&mut self) {
+            TEST_GUARD_OVERRIDE.with(|cell| *cell.borrow_mut() = None);
+        }
+    }
+
+    /// Installs a fresh, unengaged [`EstopGuard`] as this thread's override
+    /// and returns it. `require_otp_to_resume: true` matches the
+    /// secure-by-default config so gateway tests can exercise real OTP
+    /// enforcement.
+    pub(crate) fn reset_and_get() -> ScopedGuard {
+        let dir = tempfile::tempdir().expect("create estop test tempdir");
+        let dir_path = dir.path().to_path_buf();
+        // Leaked deliberately: the guard installed below must outlive this
+        // function; it's cleaned up (along with the override) when the
+        // returned `ScopedGuard` drops at the end of the test.
+        std::mem::forget(dir);
+        let cfg = EstopConfig {
+            enabled: true,
+            state_file: dir_path.join("estop-state.json").display().to_string(),
+            require_otp_to_resume: true,
+        };
+        let guard = Arc::new(EstopGuard::load(&cfg, &dir_path).expect("load test estop guard"));
+        TEST_GUARD_OVERRIDE.with(|cell| *cell.borrow_mut() = Some(Arc::clone(&guard)));
+        ScopedGuard(guard)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -418,5 +685,91 @@ mod tests {
             .resume(ResumeSelector::KillAll, Some(&code), Some(&validator))
             .unwrap();
         assert!(!manager.status().kill_all);
+    }
+
+    #[test]
+    fn guard_allows_when_not_engaged() {
+        let dir = tempdir().unwrap();
+        let state_path = dir.path().join("estop-state.json");
+        let cfg = estop_config(&state_path);
+        let guard = EstopGuard::load(&cfg, dir.path()).unwrap();
+
+        assert!(guard.check_turn_allowed().is_none());
+        assert!(guard.check_tool("shell").is_none());
+        assert!(guard.check_domain("example.com").is_none());
+    }
+
+    #[test]
+    fn guard_check_turn_allowed_blocks_on_kill_all() {
+        let dir = tempdir().unwrap();
+        let state_path = dir.path().join("estop-state.json");
+        let cfg = estop_config(&state_path);
+        let guard = EstopGuard::load(&cfg, dir.path()).unwrap();
+
+        guard.engage(EstopLevel::KillAll).unwrap();
+        let reason = guard
+            .check_turn_allowed()
+            .expect("turn should be blocked by kill-all");
+        assert!(reason.contains("kill-all"));
+    }
+
+    #[test]
+    fn guard_check_tool_blocks_frozen_tool_only() {
+        let dir = tempdir().unwrap();
+        let state_path = dir.path().join("estop-state.json");
+        let cfg = estop_config(&state_path);
+        let guard = EstopGuard::load(&cfg, dir.path()).unwrap();
+
+        guard
+            .engage(EstopLevel::ToolFreeze(vec!["shell".into()]))
+            .unwrap();
+        assert!(guard.check_tool("shell").is_some());
+        assert!(guard.check_tool("file_read").is_none());
+    }
+
+    #[test]
+    fn guard_check_tool_blocks_network_tools_on_network_kill() {
+        let dir = tempdir().unwrap();
+        let state_path = dir.path().join("estop-state.json");
+        let cfg = estop_config(&state_path);
+        let guard = EstopGuard::load(&cfg, dir.path()).unwrap();
+
+        guard.engage(EstopLevel::NetworkKill).unwrap();
+        assert!(guard.check_tool("web_fetch").is_some());
+        assert!(guard.check_tool("http_request").is_some());
+        assert!(guard.check_tool("file_read").is_none());
+    }
+
+    #[test]
+    fn guard_check_domain_blocks_matching_pattern() {
+        let dir = tempdir().unwrap();
+        let state_path = dir.path().join("estop-state.json");
+        let cfg = estop_config(&state_path);
+        let guard = EstopGuard::load(&cfg, dir.path()).unwrap();
+
+        guard
+            .engage(EstopLevel::DomainBlock(vec!["*.chase.com".into()]))
+            .unwrap();
+        assert!(guard.check_domain("secure.chase.com").is_some());
+        assert!(guard.check_domain("example.com").is_none());
+    }
+
+    #[test]
+    fn guard_observes_out_of_process_state_file_changes() {
+        let dir = tempdir().unwrap();
+        let state_path = dir.path().join("estop-state.json");
+        let cfg = estop_config(&state_path);
+        let guard = EstopGuard::load(&cfg, dir.path()).unwrap();
+        assert!(guard.check_turn_allowed().is_none());
+
+        // Simulate a separate `agentzero estop` CLI process mutating the
+        // shared state file directly, independent of this guard's Arc.
+        // Sleep past filesystems with coarse (1s) mtime resolution so the
+        // guard's mtime-change detection reliably observes the write.
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        let mut other_process_manager = EstopManager::load(&cfg, dir.path()).unwrap();
+        other_process_manager.engage(EstopLevel::KillAll).unwrap();
+
+        assert!(guard.check_turn_allowed().is_some());
     }
 }

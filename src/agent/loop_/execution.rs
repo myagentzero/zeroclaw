@@ -41,6 +41,24 @@ async fn execute_one_tool(
 
     super::record_tool_usage_from_context(call_name);
 
+    if let Some(reason) =
+        crate::security::estop_guard().and_then(|guard| guard.check_tool(call_name))
+    {
+        let duration = start.elapsed();
+        observer.record_event(&ObserverEvent::ToolCall {
+            tool: call_name.to_string(),
+            duration,
+            success: false,
+            output: Some(reason.clone()),
+        });
+        return Ok(ToolExecutionOutcome {
+            output: reason.clone(),
+            success: false,
+            error_reason: Some(reason),
+            duration,
+        });
+    }
+
     let tool_future = tool.execute(call_arguments);
     let tool_result = if let Some(token) = cancellation_token {
         tokio::select! {
@@ -204,4 +222,118 @@ pub(super) async fn execute_tools_sequential(
     }
 
     Ok(outcomes)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::observability::NoopObserver;
+    use crate::security::EstopLevel;
+    use crate::security::estop::test_support;
+    use async_trait::async_trait;
+
+    struct EchoTool {
+        name: String,
+    }
+
+    impl EchoTool {
+        fn new(name: &str) -> Self {
+            Self {
+                name: name.to_string(),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl Tool for EchoTool {
+        fn name(&self) -> &str {
+            &self.name
+        }
+
+        fn description(&self) -> &str {
+            "Echoes for estop enforcement tests"
+        }
+
+        fn parameters_schema(&self) -> serde_json::Value {
+            serde_json::json!({ "type": "object", "properties": {} })
+        }
+
+        async fn execute(
+            &self,
+            _args: serde_json::Value,
+        ) -> anyhow::Result<crate::tools::ToolResult> {
+            Ok(crate::tools::ToolResult {
+                success: true,
+                output: "ok".to_string(),
+                error: None,
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn execute_one_tool_soft_refuses_frozen_tool() {
+        let guard = test_support::reset_and_get();
+        guard
+            .engage(EstopLevel::ToolFreeze(vec!["shell".to_string()]))
+            .unwrap();
+
+        let tools_registry: Vec<Box<dyn Tool>> = vec![Box::new(EchoTool::new("shell"))];
+        let observer = NoopObserver;
+
+        let outcome = execute_one_tool(
+            "shell",
+            serde_json::json!({}),
+            &tools_registry,
+            &observer,
+            None,
+        )
+        .await
+        .expect("execute_one_tool should return a soft refusal, not an error");
+
+        assert!(!outcome.success);
+        assert!(outcome.error_reason.unwrap().contains("frozen"));
+    }
+
+    #[tokio::test]
+    async fn execute_one_tool_soft_refuses_network_tool_on_network_kill() {
+        let guard = test_support::reset_and_get();
+        guard.engage(EstopLevel::NetworkKill).unwrap();
+
+        let tools_registry: Vec<Box<dyn Tool>> = vec![Box::new(EchoTool::new("web_fetch"))];
+        let observer = NoopObserver;
+
+        let outcome = execute_one_tool(
+            "web_fetch",
+            serde_json::json!({}),
+            &tools_registry,
+            &observer,
+            None,
+        )
+        .await
+        .expect("execute_one_tool should return a soft refusal, not an error");
+
+        assert!(!outcome.success);
+        assert!(outcome.error_reason.unwrap().contains("network-kill"));
+    }
+
+    #[tokio::test]
+    async fn execute_one_tool_allows_non_network_tool_during_network_kill() {
+        let guard = test_support::reset_and_get();
+        guard.engage(EstopLevel::NetworkKill).unwrap();
+
+        let tools_registry: Vec<Box<dyn Tool>> = vec![Box::new(EchoTool::new("file_read"))];
+        let observer = NoopObserver;
+
+        let outcome = execute_one_tool(
+            "file_read",
+            serde_json::json!({}),
+            &tools_registry,
+            &observer,
+            None,
+        )
+        .await
+        .expect("execute_one_tool should not error");
+
+        assert!(outcome.success);
+    }
 }

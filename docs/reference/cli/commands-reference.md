@@ -97,6 +97,7 @@ Notes:
 - `estop` commands require `[security.estop].enabled = true`.
 - When `[security.estop].require_otp_to_resume = true`, `resume` requires OTP validation.
 - OTP prompt appears automatically if `--otp` is omitted.
+- Estop can also be engaged/resumed from the WebUI (`/estop` page) or the Android app (Estop screen) via the gateway's `/api/estop`, `/api/estop/engage`, and `/api/estop/resume` endpoints — see `config-reference.md`'s `[security.estop]` section. All clients (CLI, WebUI, Android) read and write the same on-disk estop state, so engaging from one is immediately visible and enforced everywhere else.
 
 ### `service`
 

@@ -45,6 +45,9 @@ credentials.json
 # Coverage artifacts
 lcov.info
 
+# Local tool usage tracking state (test/runtime artifact)
+/state/tool_usage.json
+
 # IDE's stuff
 .idea
 

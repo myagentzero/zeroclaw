@@ -1091,6 +1091,245 @@ pub async fn handle_api_health(
     Json(serde_json::json!({"health": snapshot})).into_response()
 }
 
+// ── Emergency stop (estop) ───────────────────────────────────────
+
+fn estop_disabled_response() -> axum::response::Response {
+    (
+        StatusCode::CONFLICT,
+        Json(serde_json::json!({
+            "error": "Emergency stop is disabled. Set [security.estop].enabled = true in \
+                      config.toml and restart AgentZero."
+        })),
+    )
+        .into_response()
+}
+
+fn estop_status_json(
+    config: &crate::config::EstopConfig,
+    status: &crate::security::EstopState,
+) -> serde_json::Value {
+    serde_json::json!({
+        "enabled": true,
+        "is_engaged": status.is_engaged(),
+        "kill_all": status.kill_all,
+        "network_kill": status.network_kill,
+        "blocked_domains": status.blocked_domains,
+        "frozen_tools": status.frozen_tools,
+        "updated_at": status.updated_at,
+        "require_otp_to_resume": config.require_otp_to_resume,
+    })
+}
+
+fn broadcast_estop_status(state: &AppState, status: &crate::security::EstopState) {
+    let mut payload = serde_json::json!({ "type": "estop_status" });
+    if let serde_json::Value::Object(map) = &mut payload {
+        map.insert("is_engaged".into(), status.is_engaged().into());
+        map.insert("kill_all".into(), status.kill_all.into());
+        map.insert("network_kill".into(), status.network_kill.into());
+        map.insert(
+            "blocked_domains".into(),
+            serde_json::to_value(&status.blocked_domains).unwrap_or_default(),
+        );
+        map.insert(
+            "frozen_tools".into(),
+            serde_json::to_value(&status.frozen_tools).unwrap_or_default(),
+        );
+        map.insert(
+            "updated_at".into(),
+            serde_json::to_value(&status.updated_at).unwrap_or_default(),
+        );
+    }
+    let _ = state.event_tx.send(payload);
+}
+
+/// GET /api/estop — current emergency-stop status.
+pub async fn handle_api_estop_get(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    if let Err(e) = require_auth(&state, &headers) {
+        return e.into_response();
+    }
+    let config = state.config.lock().clone();
+    if !config.security.estop.enabled {
+        return estop_disabled_response();
+    }
+    let Some(guard) = crate::security::estop_guard() else {
+        return estop_disabled_response();
+    };
+    Json(estop_status_json(&config.security.estop, &guard.status())).into_response()
+}
+
+#[derive(Deserialize)]
+pub struct EstopEngageBody {
+    pub level: String,
+    #[serde(default)]
+    pub domains: Vec<String>,
+    #[serde(default)]
+    pub tools: Vec<String>,
+}
+
+/// POST /api/estop/engage — engage emergency stop at the given level.
+pub async fn handle_api_estop_engage(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<EstopEngageBody>,
+) -> impl IntoResponse {
+    if let Err(e) = require_auth(&state, &headers) {
+        return e.into_response();
+    }
+    let config = state.config.lock().clone();
+    if !config.security.estop.enabled {
+        return estop_disabled_response();
+    }
+    let Some(guard) = crate::security::estop_guard() else {
+        return estop_disabled_response();
+    };
+
+    let level = match body.level.as_str() {
+        "kill-all" | "kill_all" => crate::security::EstopLevel::KillAll,
+        "network-kill" | "network_kill" => crate::security::EstopLevel::NetworkKill,
+        "domain-block" | "domain_block" => {
+            if body.domains.is_empty() {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(serde_json::json!({"error": "level=domain-block requires at least one entry in 'domains'"})),
+                )
+                    .into_response();
+            }
+            crate::security::EstopLevel::DomainBlock(body.domains)
+        }
+        "tool-freeze" | "tool_freeze" => {
+            if body.tools.is_empty() {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(serde_json::json!({"error": "level=tool-freeze requires at least one entry in 'tools'"})),
+                )
+                    .into_response();
+            }
+            crate::security::EstopLevel::ToolFreeze(body.tools)
+        }
+        other => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({
+                    "error": format!("Unknown estop level '{other}'; expected one of kill-all, network-kill, domain-block, tool-freeze")
+                })),
+            )
+                .into_response();
+        }
+    };
+
+    if let Err(e) = guard.engage(level) {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": e.to_string()})),
+        )
+            .into_response();
+    }
+    tracing::warn!("🛑 Emergency stop engaged via /api/estop/engage");
+    let status = guard.status();
+    broadcast_estop_status(&state, &status);
+    Json(estop_status_json(&config.security.estop, &status)).into_response()
+}
+
+#[derive(Deserialize)]
+pub struct EstopResumeBody {
+    #[serde(default)]
+    pub network: bool,
+    #[serde(default)]
+    pub domains: Vec<String>,
+    #[serde(default)]
+    pub tools: Vec<String>,
+    #[serde(default)]
+    pub otp_code: Option<String>,
+}
+
+/// POST /api/estop/resume — resume from emergency stop (kill-all by default,
+/// or a specific `network`/`domains`/`tools` selector). OTP-gated when
+/// `[security.estop].require_otp_to_resume` is set.
+pub async fn handle_api_estop_resume(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<EstopResumeBody>,
+) -> impl IntoResponse {
+    if let Err(e) = require_auth(&state, &headers) {
+        return e.into_response();
+    }
+    let config = state.config.lock().clone();
+    if !config.security.estop.enabled {
+        return estop_disabled_response();
+    }
+    let Some(guard) = crate::security::estop_guard() else {
+        return estop_disabled_response();
+    };
+
+    let selected_count = usize::from(body.network)
+        + usize::from(!body.domains.is_empty())
+        + usize::from(!body.tools.is_empty());
+    if selected_count > 1 {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": "Use only one of 'network', 'domains', or 'tools' for estop resume"})),
+        )
+            .into_response();
+    }
+    let selector = if body.network {
+        crate::security::ResumeSelector::Network
+    } else if !body.domains.is_empty() {
+        crate::security::ResumeSelector::Domains(body.domains)
+    } else if !body.tools.is_empty() {
+        crate::security::ResumeSelector::Tools(body.tools)
+    } else {
+        crate::security::ResumeSelector::KillAll
+    };
+
+    let otp_validator = if config.security.estop.require_otp_to_resume {
+        if !config.security.otp.enabled {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": "security.estop.require_otp_to_resume=true but security.otp.enabled=false"})),
+            )
+                .into_response();
+        }
+        let config_dir = match config.config_path.parent() {
+            Some(dir) => dir,
+            None => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({"error": "Config path must have a parent directory"})),
+                )
+                    .into_response();
+            }
+        };
+        let store = crate::security::SecretStore::new(config_dir, config.secrets.encrypt);
+        match crate::security::OtpValidator::from_config(&config.security.otp, config_dir, &store) {
+            Ok((validator, _enrollment_uri)) => Some(validator),
+            Err(e) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({"error": e.to_string()})),
+                )
+                    .into_response();
+            }
+        }
+    } else {
+        None
+    };
+
+    if let Err(e) = guard.resume(selector, body.otp_code.as_deref(), otp_validator.as_ref()) {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": e.to_string()})),
+        )
+            .into_response();
+    }
+    tracing::warn!("✅ Emergency stop resume completed via /api/estop/resume");
+    let status = guard.status();
+    broadcast_estop_status(&state, &status);
+    Json(estop_status_json(&config.security.estop, &status)).into_response()
+}
+
 /// POST /api/pairing/initiate — generate a new invite code for an additional device.
 ///
 /// Requires an existing bearer token so only already-paired clients (e.g. the
