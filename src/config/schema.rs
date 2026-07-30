@@ -252,10 +252,6 @@ pub struct Config {
     #[serde(default)]
     pub cron: CronConfig,
 
-    /// Goal loop configuration for autonomous long-term goal execution (`[goal_loop]`).
-    #[serde(default)]
-    pub goal_loop: GoalLoopConfig,
-
     /// Memory consolidation configuration (`[consolidation]`).
     #[serde(default)]
     pub consolidation: ConsolidationConfig,
@@ -359,10 +355,6 @@ pub struct Config {
     /// Voice transcription configuration (Whisper API via Groq).
     #[serde(default)]
     pub transcription: TranscriptionConfig,
-
-    /// Inter-process agent communication (`[agents_ipc]`).
-    #[serde(default)]
-    pub agents_ipc: AgentsIpcConfig,
 
     /// External MCP server connections (`[mcp]`).
     #[serde(default, alias = "mcpServers")]
@@ -717,40 +709,6 @@ pub struct McpConfig {
     /// Configured MCP servers.
     #[serde(default, alias = "mcpServers")]
     pub servers: Vec<McpServerConfig>,
-}
-
-// ── Agents IPC ──────────────────────────────────────────────────
-
-fn default_agents_ipc_db_path() -> String {
-    "~/.agentzero/agents.db".into()
-}
-
-fn default_agents_ipc_staleness_secs() -> u64 {
-    300
-}
-
-/// Inter-process agent communication configuration (`[agents_ipc]` section).
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct AgentsIpcConfig {
-    /// Enable inter-process agent communication tools.
-    #[serde(default)]
-    pub enabled: bool,
-    /// Path to shared SQLite database (all agents on this host share one file).
-    #[serde(default = "default_agents_ipc_db_path")]
-    pub db_path: String,
-    /// Agents not seen within this window are considered offline (seconds).
-    #[serde(default = "default_agents_ipc_staleness_secs")]
-    pub staleness_secs: u64,
-}
-
-impl Default for AgentsIpcConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            db_path: default_agents_ipc_db_path(),
-            staleness_secs: default_agents_ipc_staleness_secs(),
-        }
-    }
 }
 
 fn default_coordination_enabled() -> bool {
@@ -1882,26 +1840,6 @@ pub struct GatewayConfig {
     /// Pre-set pairing code (set via `--new-pairing <CODE>`, consumed on gateway start).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pairing_code: Option<String>,
-
-    /// Node-control protocol scaffold (`[gateway.node_control]`).
-    #[serde(default)]
-    pub node_control: NodeControlConfig,
-}
-
-/// Node-control scaffold settings under `[gateway.node_control]`.
-#[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
-pub struct NodeControlConfig {
-    /// Enable experimental node-control API endpoints.
-    #[serde(default)]
-    pub enabled: bool,
-
-    /// Optional extra shared token for node-control API calls.
-    #[serde(default)]
-    pub auth_token: Option<String>,
-
-    /// Allowlist of remote node IDs for `node.describe`/`node.invoke`.
-    #[serde(default)]
-    pub allowed_node_ids: Vec<String>,
 }
 
 fn default_gateway_port() -> u16 {
@@ -1951,7 +1889,6 @@ impl Default for GatewayConfig {
             idempotency_ttl_secs: default_idempotency_ttl_secs(),
             idempotency_max_keys: default_gateway_idempotency_max_keys(),
             pairing_code: None,
-            node_control: NodeControlConfig::default(),
         }
     }
 }
@@ -4030,40 +3967,6 @@ impl Default for ConsolidationConfig {
     }
 }
 
-// ── Goal Loop Config ────────────────────────────────────────────
-
-/// Configuration for the autonomous goal loop engine (`[goal_loop]`).
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct GoalLoopConfig {
-    /// Enable autonomous goal execution. Default: `false`.
-    pub enabled: bool,
-    /// Interval in minutes between goal loop cycles. Default: `10`.
-    pub interval_minutes: u32,
-    /// Timeout in seconds for a single step execution. Default: `120`.
-    pub step_timeout_secs: u64,
-    /// Maximum steps to execute per cycle. Default: `3`.
-    pub max_steps_per_cycle: u32,
-    /// Optional channel to deliver goal events to (e.g. "slack").
-    #[serde(default)]
-    pub channel: Option<String>,
-    /// Optional recipient/chat_id for goal event delivery.
-    #[serde(default)]
-    pub target: Option<String>,
-}
-
-impl Default for GoalLoopConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            interval_minutes: 10,
-            step_timeout_secs: 120,
-            max_steps_per_cycle: 3,
-            channel: None,
-            target: None,
-        }
-    }
-}
-
 // ── Cron ────────────────────────────────────────────────────────
 
 /// Cron job configuration (`[cron]` section).
@@ -5648,7 +5551,6 @@ impl Default for Config {
             embedding_routes: Vec::new(),
             heartbeat: HeartbeatConfig::default(),
             cron: CronConfig::default(),
-            goal_loop: GoalLoopConfig::default(),
             consolidation: ConsolidationConfig::default(),
             channels_config: ChannelsConfig::default(),
             memory: MemoryConfig::default(),
@@ -5674,7 +5576,6 @@ impl Default for Config {
             hardware: HardwareConfig::default(),
             query_classification: QueryClassificationConfig::default(),
             transcription: TranscriptionConfig::default(),
-            agents_ipc: AgentsIpcConfig::default(),
             mcp: McpConfig::default(),
             model_support_vision: None,
             notion: NotionConfig::default(),
@@ -8894,7 +8795,6 @@ default_temperature = 0.7
                 load_session_context: false,
             },
             cron: CronConfig::default(),
-            goal_loop: GoalLoopConfig::default(),
             consolidation: ConsolidationConfig::default(),
             channels_config: ChannelsConfig {
                 cli: true,
@@ -8936,7 +8836,6 @@ default_temperature = 0.7
             hooks: HooksConfig::default(),
             hardware: HardwareConfig::default(),
             transcription: TranscriptionConfig::default(),
-            agents_ipc: AgentsIpcConfig::default(),
             mcp: McpConfig::default(),
             model_support_vision: None,
             notion: NotionConfig::default(),
@@ -9212,7 +9111,6 @@ compact_context = true
             query_classification: QueryClassificationConfig::default(),
             heartbeat: HeartbeatConfig::default(),
             cron: CronConfig::default(),
-            goal_loop: GoalLoopConfig::default(),
             consolidation: ConsolidationConfig::default(),
             channels_config: ChannelsConfig::default(),
             memory: MemoryConfig::default(),
@@ -9236,7 +9134,6 @@ compact_context = true
             hooks: HooksConfig::default(),
             hardware: HardwareConfig::default(),
             transcription: TranscriptionConfig::default(),
-            agents_ipc: AgentsIpcConfig::default(),
             mcp: McpConfig::default(),
             model_support_vision: None,
             notion: NotionConfig::default(),
@@ -9772,9 +9669,6 @@ allowed_sender_ids = ["U111", "U222"]
         assert_eq!(g.rate_limit_max_keys, 10_000);
         assert_eq!(g.idempotency_ttl_secs, 300);
         assert_eq!(g.idempotency_max_keys, 10_000);
-        assert!(!g.node_control.enabled);
-        assert!(g.node_control.auth_token.is_none());
-        assert!(g.node_control.allowed_node_ids.is_empty());
     }
 
     #[test]
@@ -9807,11 +9701,6 @@ allowed_sender_ids = ["U111", "U222"]
             idempotency_ttl_secs: 600,
             idempotency_max_keys: 4096,
             pairing_code: None,
-            node_control: NodeControlConfig {
-                enabled: true,
-                auth_token: Some("node-token".into()),
-                allowed_node_ids: vec!["node-1".into(), "node-2".into()],
-            },
         };
         let toml_str = toml::to_string(&g).unwrap();
         let parsed: GatewayConfig = toml::from_str(&toml_str).unwrap();
@@ -9824,15 +9713,6 @@ allowed_sender_ids = ["U111", "U222"]
         assert_eq!(parsed.rate_limit_max_keys, 2048);
         assert_eq!(parsed.idempotency_ttl_secs, 600);
         assert_eq!(parsed.idempotency_max_keys, 4096);
-        assert!(parsed.node_control.enabled);
-        assert_eq!(
-            parsed.node_control.auth_token.as_deref(),
-            Some("node-token")
-        );
-        assert_eq!(
-            parsed.node_control.allowed_node_ids,
-            vec!["node-1", "node-2"]
-        );
     }
 
     #[test]
@@ -12008,9 +11888,6 @@ default_model = "legacy-model"
         assert!(!g.trust_forwarded_headers);
         assert_eq!(g.rate_limit_max_keys, 10_000);
         assert_eq!(g.idempotency_max_keys, 10_000);
-        assert!(!g.node_control.enabled);
-        assert!(g.node_control.auth_token.is_none());
-        assert!(g.node_control.allowed_node_ids.is_empty());
     }
 
     // ── Peripherals config ───────────────────────────────────────

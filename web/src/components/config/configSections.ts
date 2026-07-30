@@ -16,7 +16,6 @@ import {
   Sparkles,
   Heart,
   Timer,
-  Target,
   MessageCircle,
   Hash,
   Database,
@@ -598,24 +597,6 @@ export const CONFIG_SECTIONS: SectionDef[] = [
     ],
   },
 
-  // ── Goal Loop ─────────────────────────────────────────────────────
-  {
-    path: 'goal_loop',
-    category: 'advanced',
-    title: 'Goal Loop',
-    description: 'Autonomous goal pursuit loop',
-    icon: Target,
-    defaultCollapsed: true,
-    fields: [
-      { key: 'enabled', label: 'Enabled', type: 'toggle', defaultValue: false },
-      { key: 'interval_minutes', label: 'Interval (min)', type: 'number', min: 1, defaultValue: 10, description: 'Default: 10' },
-      { key: 'step_timeout_secs', label: 'Step Timeout (s)', type: 'number', min: 1, defaultValue: 120, description: 'Default: 120 (2 min)' },
-      { key: 'max_steps_per_cycle', label: 'Max Steps / Cycle', type: 'number', min: 1, defaultValue: 3, description: 'Default: 3' },
-      { key: 'channel', label: 'Channel', type: 'text', description: 'e.g. telegram, discord' },
-      { key: 'target', label: 'Target', type: 'text', description: 'e.g. channel ID or user ID' },
-    ],
-  },
-
   // ── Channels Config ───────────────────────────────────────────────
   {
     path: 'channels_config',
@@ -753,21 +734,6 @@ export const CONFIG_SECTIONS: SectionDef[] = [
       { key: 'webhook_rate_limit_per_minute', label: 'Webhook Rate Limit / min', type: 'number', min: 1, defaultValue: 60, description: 'Default: 60' },
       { key: 'trust_forwarded_headers', label: 'Trust Forwarded Headers', type: 'toggle', defaultValue: false },
       { key: 'idempotency_ttl_secs', label: 'Idempotency TTL (s)', type: 'number', min: 1, defaultValue: 300, description: 'Default: 300 (5 min)' },
-    ],
-  },
-
-  // ── Gateway: Node Control ─────────────────────────────────────────
-  {
-    path: 'gateway.node_control',
-    category: 'network',
-    title: 'Gateway: Node Control',
-    description: 'Multi-node control plane',
-    icon: Router,
-    defaultCollapsed: true,
-    fields: [
-      { key: 'enabled', label: 'Enabled', type: 'toggle', defaultValue: false },
-      { key: 'auth_token', label: 'Auth Token', type: 'password', sensitive: true, description: 'Shared secret for node auth' },
-      { key: 'allowed_node_ids', label: 'Allowed Node IDs', type: 'tag-list', tagPlaceholder: 'e.g. node-1, node-us-east' },
     ],
   },
 
@@ -1261,18 +1227,4 @@ export const CONFIG_SECTIONS: SectionDef[] = [
     ],
   },
 
-  // ── Agents IPC ────────────────────────────────────────────────────
-  {
-    path: 'agents_ipc',
-    category: 'advanced',
-    title: 'Agents IPC',
-    description: 'Inter-process agent communication',
-    icon: Users,
-    defaultCollapsed: true,
-    fields: [
-      { key: 'enabled', label: 'Enabled', type: 'toggle', defaultValue: false },
-      { key: 'db_path', label: 'Database Path', type: 'text', defaultValue: '~/.agentzero/agents.db', description: 'Default: ~/.agentzero/agents.db' },
-      { key: 'staleness_secs', label: 'Staleness (s)', type: 'number', min: 1, defaultValue: 300, description: 'Default: 300 (5 min)' },
-    ],
-  },
 ];
