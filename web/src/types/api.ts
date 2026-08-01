@@ -65,6 +65,22 @@ export interface CronJob {
   light_context: boolean;
 }
 
+export interface TaskItem {
+  id: string;
+  subject: string;
+  description: string;
+  active_form: string | null;
+  status: 'pending' | 'in_progress' | 'completed';
+  owner: string | null;
+  blocked_by: string[];
+  blocks: string[];
+  metadata: Record<string, unknown>;
+  blocked: boolean;
+  available: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface Integration {
   name: string;
   description: string;

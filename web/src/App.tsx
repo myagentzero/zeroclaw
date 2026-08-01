@@ -6,6 +6,7 @@ import AgentChat from './pages/AgentChat';
 import Tools from './pages/Tools';
 import Skills from './pages/Skills';
 import Cron from './pages/Cron';
+import Tasks from './pages/Tasks';
 import Integrations from './pages/Integrations';
 import Memory from './pages/Memory';
 import Devices from './pages/Devices';
@@ -144,6 +145,7 @@ function AppContent() {
           <Route path="/tools" element={<Tools />} />
           <Route path="/skills" element={<Skills />} />
           <Route path="/cron" element={<Cron />} />
+          <Route path="/tasks" element={<Tasks />} />
           <Route path="/integrations" element={<Integrations />} />
           <Route path="/memory" element={<Memory />} />
           <Route path="/devices" element={<Devices />} />

@@ -29,6 +29,7 @@ const translations: Record<Locale, Record<string, string>> = {
     'nav.cron': 'Scheduled Jobs',
     'nav.integrations': 'Integrations',
     'nav.memory': 'Memory',
+    'nav.tasks': 'Tasks',
     'nav.devices': 'Devices',
     'nav.config': 'Configuration',
     'nav.cost': 'Cost Tracker',

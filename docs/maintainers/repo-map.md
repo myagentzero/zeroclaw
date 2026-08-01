@@ -104,6 +104,7 @@ Tool categories:
 - **Web**: `browser`, `web_fetch`, `web_search_tool`, `http_request`, `url_validation`
 - **Scheduling**: `cron_add`, `cron_list`, `cron_remove`
 - **Delegation**: `delegate` (sub-agent spawning), `delegate_coordination_status`, `subagent_spawn`, `subagent_manage`, `subagent_registry`, `subagent_list`
+- **Task Orchestration**: `task_create`, `task_update`, `task_get`, `task_list`, `task_registry` (SQLite-backed dependency-tracked task graph, persisted at `<workspace_dir>/tasks/tasks.db`); viewable/deletable from the web dashboard's Tasks page (`GET /api/tasks`, `DELETE /api/tasks/{id}`)
 - **Hardware**: `hardware_board_info`, `hardware_memory_map`, `hardware_memory_read`
 - **Integrations**: `github_tool`, `jira_tool`, `confluence_tool`, `notion_tool`, `servicenow_tool`
 - **Utilities**: `git_operations`, `schema`, `calculator`, `weather_tool`, `ess_query`, `provider_status`, `read_skill`

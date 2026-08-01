@@ -2,6 +2,7 @@ import type {
   StatusResponse,
   ToolSpec,
   CronJob,
+  TaskItem,
   Integration,
   IntegrationSettingsPayload,
   DiagResult,
@@ -179,6 +180,22 @@ export function addCronJob(body: {
 
 export function deleteCronJob(id: string): Promise<void> {
   return apiFetch<void>(`/api/cron/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Tasks
+// ---------------------------------------------------------------------------
+
+export function getTasks(): Promise<TaskItem[]> {
+  return apiFetch<TaskItem[] | { tasks: TaskItem[] }>('/api/tasks').then((data) =>
+    unwrapField(data, 'tasks'),
+  );
+}
+
+export function deleteTask(id: string): Promise<void> {
+  return apiFetch<void>(`/api/tasks/${encodeURIComponent(id)}`, {
     method: 'DELETE',
   });
 }

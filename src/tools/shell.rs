@@ -115,7 +115,7 @@ impl Tool for ShellTool {
     }
 
     fn description(&self) -> &str {
-        "Execute terminal commands (checks, builds, tests, diagnostics)."
+        "Executes bash shell commands in workspace folder."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {

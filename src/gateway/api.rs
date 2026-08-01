@@ -399,6 +399,49 @@ pub async fn handle_api_cron_delete(
     }
 }
 
+/// GET /api/tasks — list orchestration tasks (task_create/task_update/etc.)
+pub async fn handle_api_tasks_list(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    if let Err(e) = require_auth(&state, &headers) {
+        return e.into_response();
+    }
+
+    let workspace_dir = state.config.lock().workspace_dir.clone();
+    let registry = crate::tools::TaskRegistry::new(&workspace_dir);
+    match registry.list(None, None) {
+        Ok(tasks) => Json(serde_json::json!({"tasks": tasks})).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": format!("Failed to list tasks: {e}")})),
+        )
+            .into_response(),
+    }
+}
+
+/// DELETE /api/tasks/:id — delete a task
+pub async fn handle_api_tasks_delete(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    if let Err(e) = require_auth(&state, &headers) {
+        return e.into_response();
+    }
+
+    let workspace_dir = state.config.lock().workspace_dir.clone();
+    let registry = crate::tools::TaskRegistry::new(&workspace_dir);
+    match registry.delete(&id) {
+        Ok(()) => Json(serde_json::json!({"status": "ok"})).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": format!("Failed to delete task: {e}")})),
+        )
+            .into_response(),
+    }
+}
+
 /// GET /api/integrations — list all integrations with status
 pub async fn handle_api_integrations(
     State(state): State<AppState>,

@@ -7,8 +7,9 @@
 //!
 //! Tools are assembled into registries by [`default_tools`] (shell, file read/write)
 //! and [`all_tools`] (full set including memory, browser, cron, HTTP, delegation,
-//! and optional integrations). Security policy enforcement is injected via
-//! [`SecurityPolicy`](crate::security::SecurityPolicy) at construction time.
+//! task orchestration, and optional integrations). Security policy enforcement is
+//! injected via [`SecurityPolicy`](crate::security::SecurityPolicy) at construction
+//! time.
 //!
 //! # Extension
 //!
@@ -67,6 +68,11 @@ pub mod subagent_list;
 pub mod subagent_manage;
 pub mod subagent_registry;
 pub mod subagent_spawn;
+pub mod task_create;
+pub mod task_get;
+pub mod task_list;
+pub mod task_registry;
+pub mod task_update;
 pub mod traits;
 pub mod url_validation;
 pub mod usage_tracker;
@@ -122,6 +128,11 @@ pub use subagent_list::SubAgentListTool;
 pub use subagent_manage::SubAgentManageTool;
 pub use subagent_registry::SubAgentRegistry;
 pub use subagent_spawn::SubAgentSpawnTool;
+pub use task_create::TaskCreateTool;
+pub use task_get::TaskGetTool;
+pub use task_list::TaskListTool;
+pub use task_registry::TaskRegistry;
+pub use task_update::TaskUpdateTool;
 pub use traits::Tool;
 #[allow(unused_imports)]
 pub use traits::{ToolResult, ToolSpec};
@@ -365,6 +376,16 @@ pub fn all_tools_with_runtime(
         Arc::new(WeatherTool::new()),
         Arc::new(ReactionTool::new(security.clone())),
     ];
+
+    // Task orchestration tools (task_create/task_update/task_get/task_list) —
+    // always available. Tasks persist in <workspace_dir>/tasks/tasks.db so
+    // they survive process restarts, following the same SQLite-per-feature
+    // pattern as the cron store.
+    let task_registry = Arc::new(TaskRegistry::new(workspace_dir));
+    tool_arcs.push(Arc::new(TaskCreateTool::new(task_registry.clone())));
+    tool_arcs.push(Arc::new(TaskUpdateTool::new(task_registry.clone())));
+    tool_arcs.push(Arc::new(TaskGetTool::new(task_registry.clone())));
+    tool_arcs.push(Arc::new(TaskListTool::new(task_registry)));
 
     // Interactive ask_user tool — conditionally registered.
     if root_config.ask_user.enabled {
@@ -991,6 +1012,43 @@ mod tests {
         let names: Vec<&str> = tools.iter().map(|t| t.name()).collect();
         assert!(names.contains(&"bg_run"));
         assert!(names.contains(&"bg_status"));
+    }
+
+    #[test]
+    fn all_tools_always_includes_task_orchestration_tools() {
+        let tmp = TempDir::new().unwrap();
+        let security = Arc::new(SecurityPolicy::default());
+        let mem_cfg = MemoryConfig {
+            backend: "markdown".into(),
+            ..MemoryConfig::default()
+        };
+        let mem: Arc<dyn Memory> =
+            Arc::from(crate::memory::create_memory(&mem_cfg, tmp.path(), None).unwrap());
+
+        let browser = BrowserConfig::default();
+        let http = crate::config::HttpRequestConfig::default();
+        let cfg = test_config(&tmp);
+
+        let tools = all_tools(
+            Arc::new(Config::default()),
+            &security,
+            mem,
+            None,
+            None,
+            &browser,
+            &http,
+            &crate::config::WebFetchConfig::default(),
+            tmp.path(),
+            &HashMap::new(),
+            None,
+            &cfg,
+        );
+
+        let names: Vec<&str> = tools.iter().map(|t| t.name()).collect();
+        assert!(names.contains(&"task_create"));
+        assert!(names.contains(&"task_update"));
+        assert!(names.contains(&"task_get"));
+        assert!(names.contains(&"task_list"));
     }
 
     #[test]

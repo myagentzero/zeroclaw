@@ -632,6 +632,8 @@ pub async fn run_gateway(
         .route("/api/cron", get(api::handle_api_cron_list))
         .route("/api/cron", post(api::handle_api_cron_add))
         .route("/api/cron/{id}", delete(api::handle_api_cron_delete))
+        .route("/api/tasks", get(api::handle_api_tasks_list))
+        .route("/api/tasks/{id}", delete(api::handle_api_tasks_delete))
         .route("/api/integrations", get(api::handle_api_integrations))
         .route(
             "/api/integrations/settings",
