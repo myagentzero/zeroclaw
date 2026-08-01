@@ -824,7 +824,7 @@ impl Tool for GitOperationsTool {
     }
 
     fn description(&self) -> &str {
-        "Git operations: version control (prefer over shell)."
+        "Git command operations: version control (prefer over shell)."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {

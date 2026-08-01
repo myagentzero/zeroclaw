@@ -102,7 +102,7 @@ Tool categories:
 - **File/Shell**: `shell`, `file_read`, `file_write`, `file_edit`, `file_remove`, `glob_search`, `content_search`
 - **Memory**: `memory_store`, `memory_recall`, `memory_forget`, `local_context`
 - **Web**: `browser`, `web_fetch`, `web_search_tool`, `http_request`, `url_validation`
-- **Scheduling**: `cron_add`, `cron_list`, `cron_remove`
+- **Scheduling**: `cron_create`, `cron_list`, `cron_remove`
 - **Delegation**: `delegate` (sub-agent spawning), `delegate_coordination_status`, `subagent_spawn`, `subagent_manage`, `subagent_registry`, `subagent_list`
 - **Task Orchestration**: `task_create`, `task_update`, `task_get`, `task_list`, `task_registry` (SQLite-backed dependency-tracked task graph, persisted at `<workspace_dir>/tasks/tasks.db`); viewable/deletable from the web dashboard's Tasks page (`GET /api/tasks`, `DELETE /api/tasks/{id}`)
 - **Hardware**: `hardware_board_info`, `hardware_memory_map`, `hardware_memory_read`

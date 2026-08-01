@@ -30,9 +30,8 @@ impl Tool for TaskListTool {
     }
 
     fn description(&self) -> &str {
-        "List all tasks with their current status, owner, and dependency \
-         relationships. Optionally filter by status or owner. A task is \
-         'available' when it is pending, unowned, and unblocked."
+        "List tasks with status, owner, and dependencies. Filter by status/owner. \
+         'Available' means pending, unowned, and unblocked."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {

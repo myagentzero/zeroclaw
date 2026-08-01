@@ -686,7 +686,7 @@ fn is_legacy_cron_model_fallback(model: &str) -> bool {
     matches!(normalized.as_str(), "gpt-4o-mini" | "openai/gpt-4o-mini")
 }
 
-fn maybe_inject_cron_add_delivery(
+fn maybe_inject_cron_create_delivery(
     tool_name: &str,
     tool_args: &mut serde_json::Value,
     channel_name: &str,
@@ -694,7 +694,7 @@ fn maybe_inject_cron_add_delivery(
     provider_name: &str,
     active_model: &str,
 ) {
-    if tool_name != "cron_add"
+    if tool_name != "cron_create"
         || !AUTO_CRON_DELIVERY_CHANNELS
             .iter()
             .any(|supported| supported == &channel_name)
@@ -2181,7 +2181,7 @@ pub async fn run_tool_call_loop(
                 }
             }
 
-            maybe_inject_cron_add_delivery(
+            maybe_inject_cron_create_delivery(
                 &tool_name,
                 &mut tool_args,
                 channel_name,
@@ -3674,14 +3674,14 @@ mod tests {
     }
 
     #[test]
-    fn maybe_inject_cron_add_delivery_populates_agent_delivery_from_channel_context() {
+    fn maybe_inject_cron_create_delivery_populates_agent_delivery_from_channel_context() {
         let mut args = serde_json::json!({
             "job_type": "agent",
             "prompt": "remind me later"
         });
 
-        maybe_inject_cron_add_delivery(
-            "cron_add",
+        maybe_inject_cron_create_delivery(
+            "cron_create",
             &mut args,
             "notion",
             Some("-10012345"),
@@ -3696,7 +3696,7 @@ mod tests {
     }
 
     #[test]
-    fn maybe_inject_cron_add_delivery_does_not_override_explicit_target() {
+    fn maybe_inject_cron_create_delivery_does_not_override_explicit_target() {
         let mut args = serde_json::json!({
             "job_type": "agent",
             "prompt": "remind me later",
@@ -3707,8 +3707,8 @@ mod tests {
             }
         });
 
-        maybe_inject_cron_add_delivery(
-            "cron_add",
+        maybe_inject_cron_create_delivery(
+            "cron_create",
             &mut args,
             "slack",
             Some("-10012345"),
@@ -3721,14 +3721,14 @@ mod tests {
     }
 
     #[test]
-    fn maybe_inject_cron_add_delivery_skips_shell_jobs() {
+    fn maybe_inject_cron_create_delivery_skips_shell_jobs() {
         let mut args = serde_json::json!({
             "job_type": "shell",
             "command": "echo hello"
         });
 
-        maybe_inject_cron_add_delivery(
-            "cron_add",
+        maybe_inject_cron_create_delivery(
+            "cron_create",
             &mut args,
             "slack",
             Some("-10012345"),
@@ -3740,15 +3740,15 @@ mod tests {
     }
 
     #[test]
-    fn maybe_inject_cron_add_delivery_replaces_legacy_model_on_custom_provider() {
+    fn maybe_inject_cron_create_delivery_replaces_legacy_model_on_custom_provider() {
         let mut args = serde_json::json!({
             "job_type": "agent",
             "prompt": "remind me later",
             "model": "gpt-4o-mini"
         });
 
-        maybe_inject_cron_add_delivery(
-            "cron_add",
+        maybe_inject_cron_create_delivery(
+            "cron_create",
             &mut args,
             "discord",
             Some("C123"),
@@ -3760,15 +3760,15 @@ mod tests {
     }
 
     #[test]
-    fn maybe_inject_cron_add_delivery_keeps_explicit_model_for_non_custom_provider() {
+    fn maybe_inject_cron_create_delivery_keeps_explicit_model_for_non_custom_provider() {
         let mut args = serde_json::json!({
             "job_type": "agent",
             "prompt": "remind me later",
             "model": "gpt-4o-mini"
         });
 
-        maybe_inject_cron_add_delivery(
-            "cron_add",
+        maybe_inject_cron_create_delivery(
+            "cron_create",
             &mut args,
             "discord",
             Some("C123"),

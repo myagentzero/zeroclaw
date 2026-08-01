@@ -540,7 +540,7 @@ flowchart TB
     subgraph ToolCategories[Tool Categories]
         Core[Core Tools<br/>shell, file_read, file_write]
         Memory[Memory Tools<br/>store, recall, forget]
-        Schedule[Schedule Tools<br/>cron_add, cron_list, etc.]
+        Schedule[Schedule Tools<br/>cron_create, cron_list, etc.]
         Browser[Browser<br/>Brave integration]
         Composio[Composio<br/>1000+ app actions]
         Hardware[Hardware<br/>gpio_read, gpio_write,<br/>arduino_upload, etc.]

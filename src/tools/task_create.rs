@@ -27,10 +27,8 @@ impl Tool for TaskCreateTool {
     }
 
     fn description(&self) -> &str {
-        "Create a new task for persistent work orchestration. Tasks track a \
-         subject, description, status (pending/in_progress/completed), owner, and \
-         dependency relationships (blockedBy/blocks). Use task_update to set \
-         dependencies or claim ownership after creation."
+        "Create a persistent task (subject, description, status, owner, blockedBy/blocks deps). \
+         Use task_update to add dependencies or claim ownership."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
@@ -42,20 +40,20 @@ impl Tool for TaskCreateTool {
                 "subject": {
                     "type": "string",
                     "minLength": 1,
-                    "description": "Brief, imperative title (e.g. 'Implement JWT authentication middleware')"
+                    "description": "Imperative title, e.g. 'Implement xyz feature'"
                 },
                 "description": {
                     "type": "string",
                     "minLength": 1,
-                    "description": "Detailed requirements and acceptance criteria"
+                    "description": "Requirements and acceptance criteria"
                 },
                 "active_form": {
                     "type": "string",
-                    "description": "Present-continuous form shown while work is in progress (e.g. 'Implementing JWT authentication')"
+                    "description": "Present-continuous form while in progress, e.g. 'Implementing xyz feature'"
                 },
                 "metadata": {
                     "type": "object",
-                    "description": "Arbitrary key-value pairs for tracking (feature, phase, priority, etc.)"
+                    "description": "Key-value pairs for tracking (feature, phase, priority, etc.)"
                 }
             }
         })

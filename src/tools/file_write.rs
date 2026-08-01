@@ -38,7 +38,7 @@ impl Tool for FileWriteTool {
     }
 
     fn description(&self) -> &str {
-        "Write to a workspace file. Sensitive files (.env, keys) blocked by default."
+        "Write a new or existing workspace file."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {

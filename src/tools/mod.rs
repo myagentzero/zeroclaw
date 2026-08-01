@@ -25,7 +25,7 @@ pub mod calculator;
 pub mod composio;
 pub mod confluence_tool;
 pub mod content_search;
-pub mod cron_add;
+pub mod cron_create;
 pub mod cron_list;
 pub mod cron_remove;
 pub mod delegate;
@@ -88,7 +88,7 @@ pub use calculator::CalculatorTool;
 pub use composio::ComposioTool;
 pub use confluence_tool::ConfluenceTool;
 pub use content_search::ContentSearchTool;
-pub use cron_add::CronAddTool;
+pub use cron_create::CronCreateTool;
 pub use cron_list::CronListTool;
 pub use cron_remove::CronRemoveTool;
 pub use delegate::DelegateTool;
@@ -366,7 +366,7 @@ pub fn all_tools_with_runtime(
     let sandbox = crate::security::create_sandbox(&root_config.security);
 
     let mut tool_arcs: Vec<Arc<dyn Tool>> = vec![
-        Arc::new(CronAddTool::new(config.clone(), security.clone())),
+        Arc::new(CronCreateTool::new(config.clone(), security.clone())),
         Arc::new(CronListTool::new(config.clone())),
         Arc::new(CronRemoveTool::new(config.clone(), security.clone())),
         Arc::new(MemoryStoreTool::new(memory.clone(), security.clone())),

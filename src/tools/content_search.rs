@@ -37,7 +37,7 @@ impl Tool for ContentSearchTool {
     }
 
     fn description(&self) -> &str {
-        "Search file contents by regex. Prefer over shell grep/rg. For file paths only, use glob_search."
+        "Search for paterns in files by regex. Prefer over shell grep/rg."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {

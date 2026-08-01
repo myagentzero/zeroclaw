@@ -44,10 +44,8 @@ impl Tool for TaskUpdateTool {
     }
 
     fn description(&self) -> &str {
-        "Update a task's status, owner, or dependencies. Use 'add_blocked_by' to \
-         declare tasks that must complete before this one starts, or 'add_blocks' \
-         to declare tasks that cannot start until this one completes. Marking a \
-         task 'completed' automatically unblocks any tasks that were waiting on it."
+        "Update a task's status, owner, or dependencies. 'add_blocked_by'/'add_blocks' \
+         declare prerequisite/dependent tasks. Completing a task auto-unblocks its dependents."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
@@ -59,7 +57,7 @@ impl Tool for TaskUpdateTool {
                 "task_id": {
                     "type": "string",
                     "minLength": 1,
-                    "description": "The ID of the task to update, e.g. 'task-1'"
+                    "description": "Task ID to update, e.g. 'task-1'"
                 },
                 "status": {
                     "type": "string",

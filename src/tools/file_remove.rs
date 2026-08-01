@@ -71,7 +71,7 @@ impl Tool for FileRemoveTool {
     }
 
     fn description(&self) -> &str {
-        "Permanently remove a workspace file (no directories, bootstrap configs)."
+        "Permanently remove a workspace file (no directories or system files)."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {

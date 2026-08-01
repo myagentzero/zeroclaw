@@ -653,7 +653,7 @@ fn build_channel_system_prompt(
 
     if !reply_target.is_empty() {
         let context = format!(
-            "\n\nChannel: {channel_name} → {reply_target}. For cron_add, use delivery={{\"mode\":\"announce\",\"channel\":\"{channel_name}\",\"to\":\"{reply_target}\"}}"
+            "\n\nChannel: {channel_name} → {reply_target}. For cron_create, use delivery={{\"mode\":\"announce\",\"channel\":\"{channel_name}\",\"to\":\"{reply_target}\"}}"
         );
         prompt.push_str(&context);
     }

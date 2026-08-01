@@ -6,14 +6,14 @@ use async_trait::async_trait;
 use serde_json::json;
 use std::sync::Arc;
 
-pub struct CronAddTool {
+pub struct CronCreateTool {
     config: Arc<Config>,
     security: Arc<SecurityPolicy>,
 }
 
 const MIN_AGENT_EVERY_MS: u64 = 5 * 60 * 1000;
 
-impl CronAddTool {
+impl CronCreateTool {
     pub fn new(config: Arc<Config>, security: Arc<SecurityPolicy>) -> Self {
         Self { config, security }
     }
@@ -50,9 +50,9 @@ impl CronAddTool {
 }
 
 #[async_trait]
-impl Tool for CronAddTool {
+impl Tool for CronCreateTool {
     fn name(&self) -> &str {
-        "cron_add"
+        "cron_create"
     }
 
     fn description(&self) -> &str {
@@ -246,7 +246,7 @@ impl Tool for CronAddTool {
                     }
                 };
 
-                if let Some(blocked) = self.enforce_mutation_allowed("cron_add") {
+                if let Some(blocked) = self.enforce_mutation_allowed("cron_create") {
                     return Ok(blocked);
                 }
 
@@ -345,7 +345,7 @@ For one-time reminders, use schedule.kind='at' with an RFC3339 timestamp."
                     None => None,
                 };
 
-                if let Some(blocked) = self.enforce_mutation_allowed("cron_add") {
+                if let Some(blocked) = self.enforce_mutation_allowed("cron_create") {
                     return Ok(blocked);
                 }
 
@@ -415,7 +415,7 @@ mod tests {
     async fn adds_shell_job() {
         let tmp = TempDir::new().unwrap();
         let cfg = test_config(&tmp).await;
-        let tool = CronAddTool::new(cfg.clone(), test_security(&cfg));
+        let tool = CronCreateTool::new(cfg.clone(), test_security(&cfg));
         let result = tool
             .execute(json!({
                 "schedule": { "kind": "cron", "expr": "*/5 * * * *" },
@@ -443,7 +443,7 @@ mod tests {
             .await
             .unwrap();
         let cfg = Arc::new(config);
-        let tool = CronAddTool::new(cfg.clone(), test_security(&cfg));
+        let tool = CronCreateTool::new(cfg.clone(), test_security(&cfg));
 
         let result = tool
             .execute(json!({
@@ -469,7 +469,7 @@ mod tests {
         config.autonomy.level = AutonomyLevel::ReadOnly;
         std::fs::create_dir_all(&config.workspace_dir).unwrap();
         let cfg = Arc::new(config);
-        let tool = CronAddTool::new(cfg.clone(), test_security(&cfg));
+        let tool = CronCreateTool::new(cfg.clone(), test_security(&cfg));
 
         let result = tool
             .execute(json!({
@@ -497,7 +497,7 @@ mod tests {
         config.autonomy.max_actions_per_hour = 0;
         std::fs::create_dir_all(&config.workspace_dir).unwrap();
         let cfg = Arc::new(config);
-        let tool = CronAddTool::new(cfg.clone(), test_security(&cfg));
+        let tool = CronCreateTool::new(cfg.clone(), test_security(&cfg));
 
         let result = tool
             .execute(json!({
@@ -530,7 +530,7 @@ mod tests {
         config.autonomy.level = AutonomyLevel::Supervised;
         std::fs::create_dir_all(&config.workspace_dir).unwrap();
         let cfg = Arc::new(config);
-        let tool = CronAddTool::new(cfg.clone(), test_security(&cfg));
+        let tool = CronCreateTool::new(cfg.clone(), test_security(&cfg));
 
         let denied = tool
             .execute(json!({
@@ -564,7 +564,7 @@ mod tests {
     async fn rejects_invalid_schedule() {
         let tmp = TempDir::new().unwrap();
         let cfg = test_config(&tmp).await;
-        let tool = CronAddTool::new(cfg.clone(), test_security(&cfg));
+        let tool = CronCreateTool::new(cfg.clone(), test_security(&cfg));
 
         let result = tool
             .execute(json!({
@@ -588,7 +588,7 @@ mod tests {
     async fn agent_job_requires_prompt() {
         let tmp = TempDir::new().unwrap();
         let cfg = test_config(&tmp).await;
-        let tool = CronAddTool::new(cfg.clone(), test_security(&cfg));
+        let tool = CronCreateTool::new(cfg.clone(), test_security(&cfg));
 
         let result = tool
             .execute(json!({
@@ -610,7 +610,7 @@ mod tests {
     async fn agent_every_requires_recurring_confirmation() {
         let tmp = TempDir::new().unwrap();
         let cfg = test_config(&tmp).await;
-        let tool = CronAddTool::new(cfg.clone(), test_security(&cfg));
+        let tool = CronCreateTool::new(cfg.clone(), test_security(&cfg));
 
         let result = tool
             .execute(json!({
@@ -634,7 +634,7 @@ mod tests {
     async fn agent_cron_requires_recurring_confirmation() {
         let tmp = TempDir::new().unwrap();
         let cfg = test_config(&tmp).await;
-        let tool = CronAddTool::new(cfg.clone(), test_security(&cfg));
+        let tool = CronCreateTool::new(cfg.clone(), test_security(&cfg));
 
         let result = tool
             .execute(json!({
@@ -658,7 +658,7 @@ mod tests {
     async fn agent_every_rejects_high_frequency_intervals() {
         let tmp = TempDir::new().unwrap();
         let cfg = test_config(&tmp).await;
-        let tool = CronAddTool::new(cfg.clone(), test_security(&cfg));
+        let tool = CronCreateTool::new(cfg.clone(), test_security(&cfg));
 
         let result = tool
             .execute(json!({
@@ -683,7 +683,7 @@ mod tests {
     async fn agent_every_with_explicit_confirmation_succeeds() {
         let tmp = TempDir::new().unwrap();
         let cfg = test_config(&tmp).await;
-        let tool = CronAddTool::new(cfg.clone(), test_security(&cfg));
+        let tool = CronCreateTool::new(cfg.clone(), test_security(&cfg));
 
         let result = tool
             .execute(json!({
@@ -703,7 +703,7 @@ mod tests {
     async fn agent_at_job_with_light_context_stores_flag() {
         let tmp = TempDir::new().unwrap();
         let cfg = test_config(&tmp).await;
-        let tool = CronAddTool::new(cfg.clone(), test_security(&cfg));
+        let tool = CronCreateTool::new(cfg.clone(), test_security(&cfg));
 
         let at = (chrono::Utc::now() + chrono::Duration::hours(1)).to_rfc3339();
         let result = tool
@@ -728,7 +728,7 @@ mod tests {
     async fn agent_at_job_accepts_space_separated_timestamp() {
         let tmp = TempDir::new().unwrap();
         let cfg = test_config(&tmp).await;
-        let tool = CronAddTool::new(cfg.clone(), test_security(&cfg));
+        let tool = CronCreateTool::new(cfg.clone(), test_security(&cfg));
 
         let at = (chrono::Utc::now() + chrono::Duration::days(2))
             .format("%Y-%m-%d %H:%M:%S")
@@ -755,7 +755,7 @@ mod tests {
     async fn invalid_at_timestamp_returns_actionable_error() {
         let tmp = TempDir::new().unwrap();
         let cfg = test_config(&tmp).await;
-        let tool = CronAddTool::new(cfg.clone(), test_security(&cfg));
+        let tool = CronCreateTool::new(cfg.clone(), test_security(&cfg));
 
         let result = tool
             .execute(json!({
@@ -780,7 +780,7 @@ mod tests {
             config_path: tmp.path().join("config.toml"),
             ..Config::default()
         });
-        let tool = CronAddTool::new(cfg.clone(), test_security(&cfg));
+        let tool = CronCreateTool::new(cfg.clone(), test_security(&cfg));
         let schema = tool.parameters_schema();
         let schedule_at = &schema["properties"]["schedule"]["properties"]["at"];
         assert!(
