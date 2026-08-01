@@ -14,6 +14,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.filled.Bolt
+import androidx.compose.material.icons.filled.Checklist
 import androidx.compose.material.icons.filled.Dashboard
 import androidx.compose.material.icons.filled.Devices
 import androidx.compose.material.icons.filled.Dns
@@ -67,6 +68,7 @@ import com.agentzero.client.ui.screens.EstopScreen
 import com.agentzero.client.ui.screens.MemoryScreen
 import com.agentzero.client.ui.screens.MissionControlScreen
 import com.agentzero.client.ui.screens.ScheduledJobsScreen
+import com.agentzero.client.ui.screens.TasksScreen
 import com.agentzero.client.ui.screens.WorkspaceScreen
 import com.agentzero.client.ui.theme.Spacing
 import kotlinx.coroutines.launch
@@ -79,6 +81,7 @@ enum class MainDestination(
     AgentChat("Agent Chat", Icons.AutoMirrored.Filled.Chat),
     MissionControl("Mission Control", Icons.Default.MonitorHeart),
     Memory("Memory", Icons.Default.Memory),
+    Tasks("Tasks", Icons.Default.Checklist),
     ScheduledJobs("Scheduled Jobs", Icons.Default.Schedule),
     Workspace("Workspace", Icons.Default.Folder),
     Devices("Devices", Icons.Default.Devices),
@@ -173,6 +176,7 @@ fun MainShell(
                         MainDestination.AgentChat -> AgentChatScreen(config, container)
                         MainDestination.MissionControl -> MissionControlScreen(config, container)
                         MainDestination.Memory -> MemoryScreen(config, container)
+                        MainDestination.Tasks -> TasksScreen(config, container)
                         MainDestination.ScheduledJobs -> ScheduledJobsScreen(config, container)
                         MainDestination.Workspace -> WorkspaceScreen(config, container)
                         MainDestination.Devices -> DevicesScreen(config, container)

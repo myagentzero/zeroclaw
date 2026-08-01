@@ -15,6 +15,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.EventNote
 import androidx.compose.material.icons.filled.Bolt
+import androidx.compose.material.icons.filled.Checklist
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Memory
@@ -56,6 +57,7 @@ fun DashboardScreen(config: ServerConfig, container: AppContainer) {
     var status by remember { mutableStateOf<StatusResponse?>(null) }
     var cost by remember { mutableStateOf<CostSummary?>(null) }
     var upcomingJobs by remember { mutableStateOf(0) }
+    var openTasks by remember { mutableStateOf(0) }
     var error by remember { mutableStateOf<String?>(null) }
     var loading by remember { mutableStateOf(true) }
     var retryToken by remember { mutableIntStateOf(0) }
@@ -72,13 +74,16 @@ fun DashboardScreen(config: ServerConfig, container: AppContainer) {
         runCatching {
             upcomingJobs = countUpcomingJobs(container.gatewayClient.getCronJobs(config))
         }
+        runCatching {
+            openTasks = container.gatewayClient.getTasks(config).count { it.status != "completed" }
+        }
         loading = false
     }
 
     when {
         loading -> LoadingState()
         error != null -> ErrorState(error ?: "Something went wrong.", onRetry = { retryToken++ })
-        status != null && cost != null -> DashboardContent(status!!, cost!!, upcomingJobs)
+        status != null && cost != null -> DashboardContent(status!!, cost!!, upcomingJobs, openTasks)
     }
 }
 
@@ -90,7 +95,7 @@ private fun countUpcomingJobs(jobs: List<CronJob>): Int {
 }
 
 @Composable
-private fun DashboardContent(status: StatusResponse, cost: CostSummary, upcomingJobs: Int) {
+private fun DashboardContent(status: StatusResponse, cost: CostSummary, upcomingJobs: Int, openTasks: Int) {
     val maxCost = maxOf(cost.hourlyCostUsd, cost.dailyCostUsd, cost.monthlyCostUsd, 0.001)
     var costOpen by remember { mutableStateOf(true) }
     var tokensOpen by remember { mutableStateOf(true) }
@@ -121,6 +126,7 @@ private fun DashboardContent(status: StatusResponse, cost: CostSummary, upcoming
             MetricCard(Icons.Default.Schedule, "Uptime", formatUptime(status.uptimeSeconds), Modifier.weight(1f))
             MetricCard(Icons.AutoMirrored.Filled.EventNote, "Scheduled Jobs", "$upcomingJobs", Modifier.weight(1f))
         }
+        MetricCard(Icons.Default.Checklist, "Open Tasks", "$openTasks", Modifier.fillMaxWidth())
         MetricCard(
             Icons.Default.Storage,
             "Memory Backend",

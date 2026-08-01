@@ -156,6 +156,23 @@ data class CronAddBody(
 )
 
 @Serializable
+data class TaskItem(
+    val id: String,
+    val subject: String,
+    val description: String = "",
+    @SerialName("active_form") val activeForm: String? = null,
+    val status: String = "pending",
+    val owner: String? = null,
+    @SerialName("blocked_by") val blockedBy: List<String> = emptyList(),
+    val blocks: List<String> = emptyList(),
+    val metadata: JsonObject = JsonObject(emptyMap()),
+    val blocked: Boolean = false,
+    val available: Boolean = true,
+    @SerialName("created_at") val createdAt: String = "",
+    @SerialName("updated_at") val updatedAt: String = "",
+)
+
+@Serializable
 data class SseEvent(
     val type: String = "message",
     val timestamp: String? = null,

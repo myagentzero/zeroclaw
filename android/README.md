@@ -8,6 +8,7 @@ Native Android client for the [AgentZero](https://github.com/agentzero) gateway 
 - **Agent Chat** — WebSocket chat with streaming, tool calls, and history restore
 - **Mission Control** — live SSE event stream with pause, filters, and event details
 - **Memory** — browse, search, add, and delete memory entries
+- **Tasks** — view orchestration task status, dependencies, and metadata; delete stale tasks
 - **Workspace** — file tree viewer with text preview and binary download
 - **Devices** — list paired devices, generate invite codes, revoke access
 

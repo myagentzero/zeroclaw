@@ -13,6 +13,7 @@ import com.agentzero.client.data.model.PairedDevice
 import com.agentzero.client.data.model.PublicHealth
 import com.agentzero.client.data.model.ServerConfig
 import com.agentzero.client.data.model.StatusResponse
+import com.agentzero.client.data.model.TaskItem
 import com.agentzero.client.data.model.WorkspaceFileContent
 import com.agentzero.client.data.model.WorkspaceTree
 import kotlinx.serialization.json.Json
@@ -157,6 +158,15 @@ class GatewayClient(
 
     suspend fun deleteCronJob(config: ServerConfig, id: String) {
         delete(config, "/api/cron/${encode(id)}", auth = true)
+    }
+
+    suspend fun getTasks(config: ServerConfig): List<TaskItem> {
+        val body = fetch(config, "/api/tasks", auth = true)
+        return unwrapList(body, "tasks", TaskItem.serializer())
+    }
+
+    suspend fun deleteTask(config: ServerConfig, id: String) {
+        delete(config, "/api/tasks/${encode(id)}", auth = true)
     }
 
     suspend fun runDoctor(config: ServerConfig): List<DiagResult> {
