@@ -10,7 +10,6 @@ const BOOTSTRAP_FILES: &[&str] = &[
     "HEARTBEAT.md",
     "IDENTITY.md",
     "SOUL.md",
-    "TOOLS.md",
     "USER.md",
     "MEMORY.md",
     "SECURITY.md",

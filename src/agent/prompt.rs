@@ -143,7 +143,7 @@ fn load_bootstrap_files(
 ) {
     prompt.push_str("Files read from the workspace define behavior and context.\n\n");
 
-    let bootstrap_files = ["AGENTS.md", "TOOLS.md", "USER.md"];
+    let bootstrap_files = ["AGENTS.md", "USER.md"];
 
     for filename in &bootstrap_files {
         inject_workspace_file(prompt, workspace_dir, filename, max_chars_per_file);

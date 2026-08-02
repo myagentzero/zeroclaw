@@ -34,7 +34,7 @@ graph TD
 
     S --> U["Convert to system prompt<br/>or fallback to OpenClaw"]
     T --> U
-    U --> V["Add Project Context<br/>- AGENTS.md, TOOLS.md, USER.md, etc"]
+    U --> V["Add Project Context<br/>- AGENTS.md, USER.md, etc"]
     V --> R
 
     R --> W["Add Channel Capabilities<br/>- Response delivery info"]

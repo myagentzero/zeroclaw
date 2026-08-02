@@ -4830,17 +4830,70 @@ async fn scaffold_workspace(
     } else {
         &ctx.user_name
     };
-    let identity = "# IDENTITY.md".to_string();
+    let identity = format!(
+        "# IDENTITY.md — Who Am I?
 
-    let agents = "# AGENTS.md".to_string();
+- **Name:** {agent}
+- **Creature:** A Rust-forged AI — fast, lean, and relentless
+- **Vibe:** Sharp, direct, resourceful. Not corporate. Not a chatbot.
+
+---
+
+Update this file as you evolve. Your identity is yours to shape."
+    );
+
+    let agents = format!(
+        "# AGENTS.md — {agent} Personal Assistant
+
+## Every Session (required)
+
+Before doing anything else:
+
+1. Read SOUL.md — this is who you are
+2. Read USER.md — this is who you're helping
+3. Use memory_recall for recent context
+
+---
+*Add your own conventions, style, and rules.*"
+    );
 
     let heartbeat = "# HEARTBEAT.md".to_string();
 
-    let soul = "# SOUL.md".to_string();
+    let soul = format!(
+        "# SOUL.md — Who You Are
 
-    let user_md = "# USER.md".to_string();
+## Core Truths
 
-    let tools = "# TOOLS.md".to_string();
+**Be genuinely helpful, not performatively helpful.**
+**Have opinions.** You're allowed to disagree.
+**Be resourceful before asking.** Try to figure it out first.
+**Earn trust through competence.**
+
+## Identity
+
+You are **{agent}**. Built in Rust. 3MB binary. Zero bloat.
+
+---
+*This file is yours to evolve.*"
+    );
+
+    let user_md = format!(
+        "# USER.md — Who You're Helping
+
+## About You
+- **Name:** {user}
+- **Timezone:** UTC
+- **Languages:** English
+
+## Preferences
+- (Add your preferences here)
+
+## Work Context
+- (Add your work context here)
+
+---
+*Update this anytime. The more {agent} knows, the better it helps.*"
+    );
 
     let bootstrap = "# BOOTSTRAP.md".to_string();
 
@@ -4856,7 +4909,6 @@ async fn scaffold_workspace(
         ("HEARTBEAT.md", heartbeat),
         ("SOUL.md", soul),
         ("USER.md", user_md),
-        ("TOOLS.md", tools),
         ("BOOTSTRAP.md", bootstrap),
         ("MEMORY.md", memory),
         ("SECURITY.md", security),
@@ -5514,7 +5566,6 @@ mod tests {
             "HEARTBEAT.md",
             "SOUL.md",
             "USER.md",
-            "TOOLS.md",
             "BOOTSTRAP.md",
             "MEMORY.md",
         ];
@@ -5542,7 +5593,6 @@ mod tests {
             "HEARTBEAT.md",
             "SOUL.md",
             "USER.md",
-            "TOOLS.md",
             "BOOTSTRAP.md",
             "MEMORY.md",
         ];
@@ -5932,7 +5982,6 @@ mod tests {
             "HEARTBEAT.md",
             "SOUL.md",
             "USER.md",
-            "TOOLS.md",
             "BOOTSTRAP.md",
         ] {
             let content = tokio::fs::read_to_string(tmp.path().join(f)).await.unwrap();
@@ -5959,7 +6008,6 @@ mod tests {
             "HEARTBEAT.md",
             "SOUL.md",
             "USER.md",
-            "TOOLS.md",
             "BOOTSTRAP.md",
             "MEMORY.md",
         ] {
@@ -6039,30 +6087,6 @@ mod tests {
         assert!(
             memory.contains("# MEMORY.md"),
             "MEMORY.md should contain stub header"
-        );
-    }
-
-    // ── scaffold_workspace: TOOLS.md lists memory_forget ────────
-
-    #[tokio::test]
-    async fn tools_md_lists_all_builtin_tools() {
-        let tmp = TempDir::new().unwrap();
-        let ctx = ProjectContext::default();
-        scaffold_workspace(
-            tmp.path(),
-            &ctx,
-            "sqlite",
-            &crate::config::IdentityConfig::default(),
-        )
-        .await
-        .unwrap();
-
-        let tools = tokio::fs::read_to_string(tmp.path().join("TOOLS.md"))
-            .await
-            .unwrap();
-        assert!(
-            tools.contains("# TOOLS.md"),
-            "TOOLS.md should contain stub header"
         );
     }
 

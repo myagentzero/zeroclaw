@@ -1034,7 +1034,6 @@ fn check_workspace(config: &Config, items: &mut Vec<DiagItem>) {
     check_file_exists(ws, "SECURITY.md", true, cat, items);
     check_file_exists(ws, "SOUL.md", false, cat, items);
     check_file_exists(ws, "USER.md", false, cat, items);
-    check_file_exists(ws, "TOOLS.md", false, cat, items);
 }
 
 fn check_file_exists(

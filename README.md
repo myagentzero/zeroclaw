@@ -114,7 +114,6 @@ Injected prompt files:
 - `SOUL.md` - core identity and operating principles
 - `CONSOLIDATION.md` - nightly memory consolidation job
 - `HEARTBEAT.md` - tasks when you want to check something periodically
-- `TOOLS.md` - environment reference
 - `BOOTSTRAP.md` - onboarding reference
 
 

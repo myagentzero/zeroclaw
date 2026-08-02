@@ -5162,7 +5162,6 @@ mod tests {
             "# Agents\nFollow instructions.",
         )
         .unwrap();
-        std::fs::write(tmp.path().join("TOOLS.md"), "# Tools\nUse shell carefully.").unwrap();
         std::fs::write(
             tmp.path().join("HEARTBEAT.md"),
             "# Heartbeat\nCheck status.",
