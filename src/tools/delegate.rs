@@ -1,7 +1,7 @@
 use super::agent_load_tracker::AgentLoadTracker;
 use super::agent_selection::{AgentSelectionPolicy, select_agent_with_load};
 use super::orchestration_settings::load_orchestration_settings;
-use super::traits::{Tool, ToolResult};
+use super::traits::{Tool, ToolCategory, ToolResult};
 use crate::agent::loop_::{run_tool_call_loop, scope_workspace_dir};
 use crate::config::{AgentTeamsConfig, DelegateAgentConfig};
 use crate::coordination::{CoordinationEnvelope, CoordinationPayload, InMemoryMessageBus};
@@ -239,6 +239,10 @@ impl DelegateTool {
 impl Tool for DelegateTool {
     fn name(&self) -> &str {
         "delegate"
+    }
+
+    fn category(&self) -> ToolCategory {
+        ToolCategory::OrchestrationTools
     }
 
     fn description(&self) -> &str {
@@ -844,6 +848,10 @@ impl Tool for ToolArcRef {
 
     fn parameters_schema(&self) -> serde_json::Value {
         self.inner.parameters_schema()
+    }
+
+    fn category(&self) -> ToolCategory {
+        self.inner.category()
     }
 
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {

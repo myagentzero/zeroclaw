@@ -111,7 +111,7 @@ fn probe_memory_map(chip: &str) -> anyhow::Result<String> {
                     (end - start) / 1024
                 ));
             }
-            _ => {}
+            MemoryRegion::Generic(_) => {}
         }
     }
     if out.is_empty() {

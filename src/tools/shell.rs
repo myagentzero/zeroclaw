@@ -1,4 +1,4 @@
-use super::traits::{Tool, ToolResult};
+use super::traits::{Tool, ToolCategory, ToolResult};
 use crate::runtime::RuntimeAdapter;
 use crate::security::SecurityPolicy;
 use crate::security::traits::Sandbox;
@@ -112,6 +112,10 @@ fn collect_allowed_shell_env_vars(security: &SecurityPolicy) -> Vec<String> {
 impl Tool for ShellTool {
     fn name(&self) -> &str {
         "shell"
+    }
+
+    fn category(&self) -> ToolCategory {
+        ToolCategory::DeveloperTools
     }
 
     fn description(&self) -> &str {

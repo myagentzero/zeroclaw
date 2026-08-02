@@ -1,4 +1,4 @@
-use super::traits::{Tool, ToolResult};
+use super::traits::{Tool, ToolCategory, ToolResult};
 use crate::config::schema::DEFAULT_USER_AGENT;
 use crate::security::{SecurityPolicy, policy::ToolOperation};
 use async_trait::async_trait;
@@ -372,6 +372,10 @@ impl GitHubTool {
 impl Tool for GitHubTool {
     fn name(&self) -> &str {
         "github"
+    }
+
+    fn category(&self) -> ToolCategory {
+        ToolCategory::DeveloperTools
     }
 
     fn description(&self) -> &str {

@@ -5,7 +5,7 @@
 //! The tool performs a two-step fetch: first resolving the grid point, then
 //! retrieving the forecast for that grid.
 
-use super::traits::{Tool, ToolResult};
+use super::traits::{Tool, ToolCategory, ToolResult};
 use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -230,6 +230,10 @@ impl Default for WeatherTool {
 impl Tool for WeatherTool {
     fn name(&self) -> &str {
         "weather"
+    }
+
+    fn category(&self) -> ToolCategory {
+        ToolCategory::WebTools
     }
 
     fn description(&self) -> &str {

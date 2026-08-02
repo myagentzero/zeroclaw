@@ -1,4 +1,4 @@
-use super::traits::{Tool, ToolResult};
+use super::traits::{Tool, ToolCategory, ToolResult};
 use crate::security::{SecurityPolicy, policy::ToolOperation};
 use async_trait::async_trait;
 use serde_json::json;
@@ -169,6 +169,10 @@ impl NotionTool {
 impl Tool for NotionTool {
     fn name(&self) -> &str {
         "notion"
+    }
+
+    fn category(&self) -> ToolCategory {
+        ToolCategory::IntegrationTools
     }
 
     fn description(&self) -> &str {

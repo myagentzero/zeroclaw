@@ -1,4 +1,4 @@
-use super::traits::{Tool, ToolResult};
+use super::traits::{Tool, ToolCategory, ToolResult};
 use crate::security::SecurityPolicy;
 use crate::security::sensitive_paths::is_sensitive_file_path;
 use async_trait::async_trait;
@@ -27,6 +27,10 @@ fn normalize_list_path(path: Option<&str>) -> &str {
 impl Tool for FileListTool {
     fn name(&self) -> &str {
         "file_list"
+    }
+
+    fn category(&self) -> ToolCategory {
+        ToolCategory::FileTools
     }
 
     fn description(&self) -> &str {

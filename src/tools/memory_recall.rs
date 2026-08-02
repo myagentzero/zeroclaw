@@ -1,4 +1,4 @@
-use super::traits::{Tool, ToolResult};
+use super::traits::{Tool, ToolCategory, ToolResult};
 use crate::memory::{Memory, MemoryCategory};
 use async_trait::async_trait;
 use chrono::{DateTime, NaiveDate, TimeDelta, Utc};
@@ -68,6 +68,10 @@ impl MemoryRecallTool {
 impl Tool for MemoryRecallTool {
     fn name(&self) -> &str {
         "memory_recall"
+    }
+
+    fn category(&self) -> ToolCategory {
+        ToolCategory::MemoryTools
     }
 
     fn description(&self) -> &str {

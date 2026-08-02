@@ -7,7 +7,7 @@
 //! `blockedBy` dependencies.
 
 use super::task_registry::{TaskRegistry, TaskStatus};
-use super::traits::{Tool, ToolResult};
+use super::traits::{Tool, ToolCategory, ToolResult};
 use async_trait::async_trait;
 use serde_json::json;
 use std::sync::Arc;
@@ -27,6 +27,10 @@ impl TaskListTool {
 impl Tool for TaskListTool {
     fn name(&self) -> &str {
         "task_list"
+    }
+
+    fn category(&self) -> ToolCategory {
+        ToolCategory::OrchestrationTools
     }
 
     fn description(&self) -> &str {

@@ -1,4 +1,4 @@
-use super::traits::{Tool, ToolResult};
+use super::traits::{Tool, ToolCategory, ToolResult};
 use crate::security::{SecurityPolicy, policy::ToolOperation};
 use async_trait::async_trait;
 use reqwest::Client;
@@ -327,6 +327,10 @@ impl ConfluenceTool {
 impl Tool for ConfluenceTool {
     fn name(&self) -> &str {
         "confluence"
+    }
+
+    fn category(&self) -> ToolCategory {
+        ToolCategory::IntegrationTools
     }
 
     fn description(&self) -> &str {

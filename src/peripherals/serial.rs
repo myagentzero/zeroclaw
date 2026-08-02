@@ -6,7 +6,7 @@
 
 use crate::config::PeripheralBoardConfig;
 use crate::peripherals::Peripheral;
-use crate::tools::traits::{Tool, ToolResult};
+use crate::tools::traits::{Tool, ToolCategory, ToolResult};
 use async_trait::async_trait;
 use serde_json::{Value, json};
 use std::sync::Arc;
@@ -199,6 +199,10 @@ impl Tool for GpioReadTool {
         "gpio_read"
     }
 
+    fn category(&self) -> ToolCategory {
+        ToolCategory::HardwareTools
+    }
+
     fn description(&self) -> &str {
         "Read the value (0 or 1) of a GPIO pin on a connected peripheral (e.g. STM32 Nucleo)"
     }
@@ -236,6 +240,10 @@ struct GpioWriteTool {
 impl Tool for GpioWriteTool {
     fn name(&self) -> &str {
         "gpio_write"
+    }
+
+    fn category(&self) -> ToolCategory {
+        ToolCategory::HardwareTools
     }
 
     fn description(&self) -> &str {

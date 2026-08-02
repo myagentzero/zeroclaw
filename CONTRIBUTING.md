@@ -383,7 +383,7 @@ Create `src/tools/your_tool.rs`:
 use async_trait::async_trait;
 use anyhow::Result;
 use serde_json::{json, Value};
-use crate::tools::traits::{Tool, ToolResult};
+use crate::tools::traits::{Tool, ToolCategory, ToolResult};
 
 pub struct YourTool { /* security policy, config, etc. */ }
 
@@ -402,6 +402,10 @@ impl Tool for YourTool {
             "required": ["input"]
         })
     }
+
+    // Groups this tool under a header (e.g. "Developer Tools") in the
+    // LLM-facing tool instructions. Defaults to `ToolCategory::Other`.
+    fn category(&self) -> ToolCategory { ToolCategory::UtilityTools }
 
     async fn execute(&self, args: Value) -> Result<ToolResult> {
         let input = args["input"].as_str()

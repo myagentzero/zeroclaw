@@ -1,4 +1,4 @@
-use super::traits::{Tool, ToolResult};
+use super::traits::{Tool, ToolCategory, ToolResult};
 use async_trait::async_trait;
 use serde_json::json;
 
@@ -20,6 +20,10 @@ impl Default for CalculatorTool {
 impl Tool for CalculatorTool {
     fn name(&self) -> &str {
         "calculator"
+    }
+
+    fn category(&self) -> ToolCategory {
+        ToolCategory::UtilityTools
     }
 
     fn description(&self) -> &str {

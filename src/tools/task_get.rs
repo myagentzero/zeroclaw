@@ -4,7 +4,7 @@
 //! task from the persistent, SQLite-backed [`TaskRegistry`](super::task_registry::TaskRegistry).
 
 use super::task_registry::TaskRegistry;
-use super::traits::{Tool, ToolResult};
+use super::traits::{Tool, ToolCategory, ToolResult};
 use async_trait::async_trait;
 use serde_json::json;
 use std::sync::Arc;
@@ -24,6 +24,10 @@ impl TaskGetTool {
 impl Tool for TaskGetTool {
     fn name(&self) -> &str {
         "task_get"
+    }
+
+    fn category(&self) -> ToolCategory {
+        ToolCategory::OrchestrationTools
     }
 
     fn description(&self) -> &str {

@@ -111,6 +111,7 @@ pub async fn run_research_phase(
             name: t.name().to_string(),
             description: t.description().to_string(),
             parameters: t.parameters_schema(),
+            category: t.category(),
         })
         .collect();
 

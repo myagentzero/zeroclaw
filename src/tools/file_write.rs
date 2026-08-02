@@ -1,4 +1,4 @@
-use super::traits::{Tool, ToolResult};
+use super::traits::{Tool, ToolCategory, ToolResult};
 use crate::security::SecurityPolicy;
 use crate::security::file_link_guard::has_multiple_hard_links;
 use crate::security::sensitive_paths::is_sensitive_file_path;
@@ -35,6 +35,10 @@ fn hard_link_write_block_message(path: &Path) -> String {
 impl Tool for FileWriteTool {
     fn name(&self) -> &str {
         "file_write"
+    }
+
+    fn category(&self) -> ToolCategory {
+        ToolCategory::FileTools
     }
 
     fn description(&self) -> &str {

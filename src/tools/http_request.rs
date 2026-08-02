@@ -1,4 +1,4 @@
-use super::traits::{Tool, ToolResult};
+use super::traits::{Tool, ToolCategory, ToolResult};
 use super::url_validation::{
     DomainPolicy, UrlSchemePolicy, normalize_allowed_domains, validate_url,
 };
@@ -318,6 +318,10 @@ impl HttpRequestTool {
 impl Tool for HttpRequestTool {
     fn name(&self) -> &str {
         "http_request"
+    }
+
+    fn category(&self) -> ToolCategory {
+        ToolCategory::WebTools
     }
 
     fn description(&self) -> &str {

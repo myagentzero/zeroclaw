@@ -3,7 +3,7 @@
 //! Use when user asks "what board do I have?", "board info", "connected hardware", etc.
 //! Uses probe-rs for Nucleo when available; otherwise static datasheet info.
 
-use super::traits::{Tool, ToolResult};
+use super::traits::{Tool, ToolCategory, ToolResult};
 use async_trait::async_trait;
 use serde_json::json;
 
@@ -68,6 +68,10 @@ impl HardwareBoardInfoTool {
 impl Tool for HardwareBoardInfoTool {
     fn name(&self) -> &str {
         "hardware_board_info"
+    }
+
+    fn category(&self) -> ToolCategory {
+        ToolCategory::HardwareTools
     }
 
     fn description(&self) -> &str {
@@ -189,7 +193,7 @@ fn probe_board_info(chip: &str) -> anyhow::Result<String> {
                     (end - start) / 1024
                 ));
             }
-            _ => {}
+            MemoryRegion::Generic(_) => {}
         }
     }
     out.push_str("\n(Info read via USB/SWD — no firmware on target needed.)");

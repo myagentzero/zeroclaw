@@ -5,7 +5,7 @@
 //! execution time via the global `live_channels_registry()`, so no late-binding
 //! handle is needed.
 
-use super::traits::{Tool, ToolResult};
+use super::traits::{Tool, ToolCategory, ToolResult};
 use crate::channels::traits::{Channel, ChannelMessage, SendMessage};
 use crate::security::SecurityPolicy;
 use crate::security::policy::ToolOperation;
@@ -46,6 +46,10 @@ fn format_question(question: &str, choices: Option<&[String]>) -> String {
 impl Tool for AskUserTool {
     fn name(&self) -> &str {
         "ask_user"
+    }
+
+    fn category(&self) -> ToolCategory {
+        ToolCategory::CommunicationTools
     }
 
     fn description(&self) -> &str {

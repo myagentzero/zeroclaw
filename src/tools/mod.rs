@@ -135,7 +135,7 @@ pub use task_registry::TaskRegistry;
 pub use task_update::TaskUpdateTool;
 pub use traits::Tool;
 #[allow(unused_imports)]
-pub use traits::{ToolResult, ToolSpec};
+pub use traits::{ToolCategory, ToolResult, ToolSpec};
 pub use weather_tool::WeatherTool;
 pub use web_fetch::WebFetchTool;
 pub use web_search_tool::WebSearchTool;
@@ -171,6 +171,10 @@ impl Tool for ArcDelegatingTool {
 
     fn parameters_schema(&self) -> serde_json::Value {
         self.inner.parameters_schema()
+    }
+
+    fn category(&self) -> ToolCategory {
+        self.inner.category()
     }
 
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
@@ -1141,6 +1145,7 @@ mod tests {
             name: "test".into(),
             description: "A test tool".into(),
             parameters: serde_json::json!({"type": "object"}),
+            ..Default::default()
         };
         let json = serde_json::to_string(&spec).unwrap();
         let parsed: ToolSpec = serde_json::from_str(&json).unwrap();

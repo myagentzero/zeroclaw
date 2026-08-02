@@ -1,4 +1,4 @@
-use super::traits::{Tool, ToolResult};
+use super::traits::{Tool, ToolCategory, ToolResult};
 use crate::config::Config;
 use crate::cron::{self, DeliveryConfig, JobType, Schedule, SessionTarget};
 use crate::security::SecurityPolicy;
@@ -53,6 +53,10 @@ impl CronCreateTool {
 impl Tool for CronCreateTool {
     fn name(&self) -> &str {
         "cron_create"
+    }
+
+    fn category(&self) -> ToolCategory {
+        ToolCategory::RuntimeTools
     }
 
     fn description(&self) -> &str {

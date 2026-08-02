@@ -4,7 +4,7 @@
 //! returns the memory map. Uses probe-rs for Nucleo/STM32 when available; otherwise
 //! returns static maps from datasheets.
 
-use super::traits::{Tool, ToolResult};
+use super::traits::{Tool, ToolCategory, ToolResult};
 use async_trait::async_trait;
 use serde_json::json;
 
@@ -54,6 +54,10 @@ impl HardwareMemoryMapTool {
 impl Tool for HardwareMemoryMapTool {
     fn name(&self) -> &str {
         "hardware_memory_map"
+    }
+
+    fn category(&self) -> ToolCategory {
+        ToolCategory::HardwareTools
     }
 
     fn description(&self) -> &str {
@@ -174,7 +178,7 @@ fn probe_rs_memory_map(chip: &str) -> anyhow::Result<String> {
                     start, end, size_kb
                 ));
             }
-            _ => {}
+            MemoryRegion::Generic(_) => {}
         }
     }
 

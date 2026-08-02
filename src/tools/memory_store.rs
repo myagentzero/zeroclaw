@@ -1,4 +1,4 @@
-use super::traits::{Tool, ToolResult};
+use super::traits::{Tool, ToolCategory, ToolResult};
 use crate::memory::{Memory, MemoryCategory};
 use crate::security::SecurityPolicy;
 use crate::security::policy::ToolOperation;
@@ -22,6 +22,10 @@ impl MemoryStoreTool {
 impl Tool for MemoryStoreTool {
     fn name(&self) -> &str {
         "memory_store"
+    }
+
+    fn category(&self) -> ToolCategory {
+        ToolCategory::MemoryTools
     }
 
     fn description(&self) -> &str {

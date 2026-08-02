@@ -1,4 +1,4 @@
-use super::traits::{Tool, ToolResult};
+use super::traits::{Tool, ToolCategory, ToolResult};
 use crate::coordination::{CoordinationPayload, InMemoryMessageBus, SequencedEnvelope};
 use crate::security::SecurityPolicy;
 use crate::security::policy::ToolOperation;
@@ -32,6 +32,10 @@ impl DelegateCoordinationStatusTool {
 impl Tool for DelegateCoordinationStatusTool {
     fn name(&self) -> &str {
         "delegate_coordination_status"
+    }
+
+    fn category(&self) -> ToolCategory {
+        ToolCategory::OrchestrationTools
     }
 
     fn description(&self) -> &str {

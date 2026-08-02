@@ -7,7 +7,7 @@ use async_trait::async_trait;
 
 use crate::tools::mcp_client::McpRegistry;
 use crate::tools::mcp_protocol::McpToolDef;
-use crate::tools::traits::{Tool, ToolResult};
+use crate::tools::traits::{Tool, ToolCategory, ToolResult};
 
 /// A agentzero [`Tool`] backed by an MCP server tool.
 ///
@@ -41,6 +41,10 @@ impl McpToolWrapper {
 impl Tool for McpToolWrapper {
     fn name(&self) -> &str {
         &self.prefixed_name
+    }
+
+    fn category(&self) -> ToolCategory {
+        ToolCategory::IntegrationTools
     }
 
     fn description(&self) -> &str {

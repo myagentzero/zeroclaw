@@ -1,4 +1,4 @@
-use super::traits::{Tool, ToolResult};
+use super::traits::{Tool, ToolCategory, ToolResult};
 use crate::security::SecurityPolicy;
 use async_trait::async_trait;
 use serde_json::json;
@@ -203,6 +203,10 @@ fn resolve_match(content: &str, old_string: &str) -> Result<MatchOutcome, String
 impl Tool for FileEditTool {
     fn name(&self) -> &str {
         "file_edit"
+    }
+
+    fn category(&self) -> ToolCategory {
+        ToolCategory::FileTools
     }
 
     fn description(&self) -> &str {

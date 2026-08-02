@@ -1,4 +1,4 @@
-use super::traits::{Tool, ToolResult};
+use super::traits::{Tool, ToolCategory, ToolResult};
 use crate::config::Config;
 use crate::cron;
 use crate::security::SecurityPolicy;
@@ -51,6 +51,10 @@ impl CronRemoveTool {
 impl Tool for CronRemoveTool {
     fn name(&self) -> &str {
         "cron_remove"
+    }
+
+    fn category(&self) -> ToolCategory {
+        ToolCategory::RuntimeTools
     }
 
     fn description(&self) -> &str {

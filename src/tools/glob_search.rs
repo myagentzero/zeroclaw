@@ -1,4 +1,4 @@
-use super::traits::{Tool, ToolResult};
+use super::traits::{Tool, ToolCategory, ToolResult};
 use crate::security::SecurityPolicy;
 use async_trait::async_trait;
 use serde_json::json;
@@ -21,6 +21,10 @@ impl GlobSearchTool {
 impl Tool for GlobSearchTool {
     fn name(&self) -> &str {
         "glob_search"
+    }
+
+    fn category(&self) -> ToolCategory {
+        ToolCategory::FileTools
     }
 
     fn description(&self) -> &str {

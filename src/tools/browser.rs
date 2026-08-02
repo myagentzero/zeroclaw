@@ -5,7 +5,7 @@
 //! `--features browser-native` and selected through config.
 //! Computer-use (OS-level) actions are supported via an optional sidecar endpoint.
 
-use super::traits::{Tool, ToolResult};
+use super::traits::{Tool, ToolCategory, ToolResult};
 use crate::security::SecurityPolicy;
 use anyhow::Context;
 use async_trait::async_trait;
@@ -903,6 +903,10 @@ impl BrowserTool {
 impl Tool for BrowserTool {
     fn name(&self) -> &str {
         "browser"
+    }
+
+    fn category(&self) -> ToolCategory {
+        ToolCategory::WebTools
     }
 
     fn description(&self) -> &str {

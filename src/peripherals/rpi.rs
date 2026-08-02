@@ -5,7 +5,7 @@
 
 use crate::config::PeripheralBoardConfig;
 use crate::peripherals::Peripheral;
-use crate::tools::{Tool, ToolResult};
+use crate::tools::{Tool, ToolCategory, ToolResult};
 use async_trait::async_trait;
 use serde_json::{Value, json};
 
@@ -69,6 +69,10 @@ impl Tool for RpiGpioReadTool {
         "gpio_read"
     }
 
+    fn category(&self) -> ToolCategory {
+        ToolCategory::HardwareTools
+    }
+
     fn description(&self) -> &str {
         "Read the value (0 or 1) of a GPIO pin on Raspberry Pi. Uses BCM pin numbers (e.g. 17, 27)."
     }
@@ -118,6 +122,10 @@ struct RpiGpioWriteTool;
 impl Tool for RpiGpioWriteTool {
     fn name(&self) -> &str {
         "gpio_write"
+    }
+
+    fn category(&self) -> ToolCategory {
+        ToolCategory::HardwareTools
     }
 
     fn description(&self) -> &str {

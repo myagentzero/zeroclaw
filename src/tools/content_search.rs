@@ -1,4 +1,4 @@
-use super::traits::{Tool, ToolResult};
+use super::traits::{Tool, ToolCategory, ToolResult};
 use crate::security::SecurityPolicy;
 use async_trait::async_trait;
 use serde_json::json;
@@ -34,6 +34,10 @@ impl ContentSearchTool {
 impl Tool for ContentSearchTool {
     fn name(&self) -> &str {
         "content_search"
+    }
+
+    fn category(&self) -> ToolCategory {
+        ToolCategory::FileTools
     }
 
     fn description(&self) -> &str {

@@ -4,7 +4,7 @@
 //! sub-agent sessions with optional status filtering.
 
 use super::subagent_registry::SubAgentRegistry;
-use super::traits::{Tool, ToolResult};
+use super::traits::{Tool, ToolCategory, ToolResult};
 use async_trait::async_trait;
 use serde_json::json;
 use std::sync::Arc;
@@ -27,6 +27,10 @@ impl SubAgentListTool {
 impl Tool for SubAgentListTool {
     fn name(&self) -> &str {
         "subagent_list"
+    }
+
+    fn category(&self) -> ToolCategory {
+        ToolCategory::OrchestrationTools
     }
 
     fn description(&self) -> &str {

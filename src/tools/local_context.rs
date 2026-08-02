@@ -5,7 +5,7 @@
 //! UTC offset, and optional user location so the LLM can reason accurately
 //! about scheduling, localized greetings, and time-sensitive queries.
 
-use super::traits::{Tool, ToolResult};
+use super::traits::{Tool, ToolCategory, ToolResult};
 use crate::config::schema::LocalContextConfig;
 use async_trait::async_trait;
 use chrono::{Local, Utc};
@@ -33,6 +33,10 @@ impl LocalContextTool {
 impl Tool for LocalContextTool {
     fn name(&self) -> &str {
         "local_context"
+    }
+
+    fn category(&self) -> ToolCategory {
+        ToolCategory::UtilityTools
     }
 
     fn description(&self) -> &str {

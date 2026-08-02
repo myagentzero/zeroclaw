@@ -671,6 +671,7 @@ impl Provider for AnthropicProvider {
                         .get("parameters")
                         .cloned()
                         .unwrap_or(serde_json::json!({"type": "object"})),
+                    ..Default::default()
                 })
             })
             .collect();
@@ -1185,11 +1186,13 @@ mod tests {
                 name: "tool1".to_string(),
                 description: "First tool".to_string(),
                 parameters: serde_json::json!({"type": "object"}),
+                ..Default::default()
             },
             ToolSpec {
                 name: "tool2".to_string(),
                 description: "Second tool".to_string(),
                 parameters: serde_json::json!({"type": "object"}),
+                ..Default::default()
             },
         ];
 
@@ -1206,6 +1209,7 @@ mod tests {
             name: "tool1".to_string(),
             description: "Only tool".to_string(),
             parameters: serde_json::json!({"type": "object"}),
+            ..Default::default()
         }];
 
         let native_tools = AnthropicProvider::convert_tools(Some(&tools)).unwrap();

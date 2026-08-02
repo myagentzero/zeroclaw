@@ -1,4 +1,4 @@
-use super::traits::{Tool, ToolResult};
+use super::traits::{Tool, ToolCategory, ToolResult};
 use crate::config::Config;
 use crate::cron;
 use async_trait::async_trait;
@@ -19,6 +19,10 @@ impl CronListTool {
 impl Tool for CronListTool {
     fn name(&self) -> &str {
         "cron_list"
+    }
+
+    fn category(&self) -> ToolCategory {
+        ToolCategory::RuntimeTools
     }
 
     fn description(&self) -> &str {

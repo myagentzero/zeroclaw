@@ -1,4 +1,4 @@
-use super::traits::{Tool, ToolResult};
+use super::traits::{Tool, ToolCategory, ToolResult};
 use crate::security::{AutonomyLevel, SecurityPolicy};
 use async_trait::async_trait;
 use serde_json::json;
@@ -821,6 +821,10 @@ impl GitOperationsTool {
 impl Tool for GitOperationsTool {
     fn name(&self) -> &str {
         "git_operations"
+    }
+
+    fn category(&self) -> ToolCategory {
+        ToolCategory::DeveloperTools
     }
 
     fn description(&self) -> &str {

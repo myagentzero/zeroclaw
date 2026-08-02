@@ -4,7 +4,7 @@
 //! status and killing running sub-agents via cancellation tokens.
 
 use super::subagent_registry::SubAgentRegistry;
-use super::traits::{Tool, ToolResult};
+use super::traits::{Tool, ToolCategory, ToolResult};
 use crate::security::SecurityPolicy;
 use crate::security::policy::ToolOperation;
 use async_trait::async_trait;
@@ -28,6 +28,10 @@ impl SubAgentManageTool {
 impl Tool for SubAgentManageTool {
     fn name(&self) -> &str {
         "subagent_manage"
+    }
+
+    fn category(&self) -> ToolCategory {
+        ToolCategory::OrchestrationTools
     }
 
     fn description(&self) -> &str {

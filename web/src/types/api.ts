@@ -36,6 +36,7 @@ export interface ToolSpec {
   name: string;
   description: string;
   parameters: any;
+  category?: string;
   usage?: ToolUsage | null;
 }
 

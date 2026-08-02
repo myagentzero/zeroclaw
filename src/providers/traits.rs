@@ -791,6 +791,7 @@ mod tests {
             name: "shell".to_string(),
             description: "Run commands".to_string(),
             parameters: serde_json::json!({"type": "object"}),
+            ..Default::default()
         }];
 
         let request = ChatRequest {
@@ -853,6 +854,7 @@ mod tests {
             name: "shell".to_string(),
             description: "Run commands".to_string(),
             parameters: serde_json::json!({"type": "object"}),
+            ..Default::default()
         }];
 
         let request = ChatRequest {

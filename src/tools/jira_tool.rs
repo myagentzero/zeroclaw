@@ -1,4 +1,4 @@
-use super::traits::{Tool, ToolResult};
+use super::traits::{Tool, ToolCategory, ToolResult};
 use crate::security::{SecurityPolicy, policy::ToolOperation};
 use async_trait::async_trait;
 use reqwest::Client;
@@ -551,6 +551,10 @@ impl JiraTool {
 impl Tool for JiraTool {
     fn name(&self) -> &str {
         "jira"
+    }
+
+    fn category(&self) -> ToolCategory {
+        ToolCategory::IntegrationTools
     }
 
     fn description(&self) -> &str {

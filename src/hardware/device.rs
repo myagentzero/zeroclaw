@@ -458,7 +458,6 @@ impl DeviceRegistry {
                 };
             let caps = DeviceCapabilities {
                 gpio: true, // assume GPIO; Phase 3 will populate via capabilities handshake
-                ..DeviceCapabilities::default()
             };
             registry.attach_transport(&alias, transport, caps)
                 .unwrap_or_else(|e| tracing::warn!(alias = %alias, err = %e, "attach_transport: unexpected unknown alias"));

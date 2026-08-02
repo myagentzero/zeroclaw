@@ -288,10 +288,17 @@ pub(crate) fn build_tool_instructions(
         "### CRITICAL: Tool Honesty\n\n\
          Never fabricate or guess tool results. Empty → \"No results found.\"; failed → report the error; uncertain → ask the user.\n\n",
     );
+
+    let grouped = group_tool_specs_by_category(tool_specs);
+
     if native_tools {
         instructions.push_str("Available tools:\n\n");
-        for tool in tool_specs {
-            let _ = writeln!(instructions, "- **{}**: {}", tool.name, tool.description);
+        for (category, specs) in &grouped {
+            let _ = writeln!(instructions, "#### {category}\n");
+            for tool in specs {
+                let _ = writeln!(instructions, "- **{}**: {}", tool.name, tool.description);
+            }
+            instructions.push('\n');
         }
     } else {
         instructions.push_str("### Tool Calling (XML Protocol)\n\n");
@@ -304,18 +311,54 @@ pub(crate) fn build_tool_instructions(
         );
         instructions.push_str("Tool results appear in <tool_result> tags.\n\n");
 
-        for tool in tool_specs {
-            let parameters = serde_json::to_string_pretty(&tool.parameters)
-                .unwrap_or_else(|_| tool.parameters.to_string());
-            let _ = write!(
-                instructions,
-                "### {}\n{}\n\nParameters:\n```json\n{}\n```\n\n",
-                tool.name, tool.description, parameters
-            );
+        for (category, specs) in &grouped {
+            let _ = writeln!(instructions, "#### {category}\n");
+            for tool in specs {
+                let parameters = serde_json::to_string_pretty(&tool.parameters)
+                    .unwrap_or_else(|_| tool.parameters.to_string());
+                let _ = write!(
+                    instructions,
+                    "### {}\n{}\n\nParameters:\n```json\n{}\n```\n\n",
+                    tool.name, tool.description, parameters
+                );
+            }
         }
     }
 
     instructions
+}
+
+/// Group tool specs by [`crate::tools::ToolCategory`], preserving a stable,
+/// human-friendly category order and each category's registration order.
+fn group_tool_specs_by_category(
+    tool_specs: &[crate::tools::ToolSpec],
+) -> Vec<(crate::tools::ToolCategory, Vec<&crate::tools::ToolSpec>)> {
+    use crate::tools::ToolCategory;
+
+    const CATEGORY_ORDER: [ToolCategory; 11] = [
+        ToolCategory::FileTools,
+        ToolCategory::DeveloperTools,
+        ToolCategory::WebTools,
+        ToolCategory::RuntimeTools,
+        ToolCategory::MemoryTools,
+        ToolCategory::OrchestrationTools,
+        ToolCategory::IntegrationTools,
+        ToolCategory::CommunicationTools,
+        ToolCategory::HardwareTools,
+        ToolCategory::UtilityTools,
+        ToolCategory::Other,
+    ];
+
+    CATEGORY_ORDER
+        .into_iter()
+        .filter_map(|category| {
+            let specs: Vec<&crate::tools::ToolSpec> = tool_specs
+                .iter()
+                .filter(|spec| spec.category == category)
+                .collect();
+            (!specs.is_empty()).then_some((category, specs))
+        })
+        .collect()
 }
 
 pub fn build_system_prompt_with_mode(
@@ -632,6 +675,7 @@ mod tests {
                 },
                 "required": ["name"]
             }),
+            ..Default::default()
         }];
 
         let instructions = build_tool_instructions(&specs, true);
@@ -656,6 +700,7 @@ mod tests {
                 },
                 "required": ["name"]
             }),
+            ..Default::default()
         }];
 
         let instructions = build_tool_instructions(&specs, false);

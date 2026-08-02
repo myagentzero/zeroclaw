@@ -4,7 +4,7 @@
 //! agent-callable tool. Resolves channels at execution time via the global
 //! `live_channels_registry()`, so no late-binding handle is needed.
 
-use super::traits::{Tool, ToolResult};
+use super::traits::{Tool, ToolCategory, ToolResult};
 use crate::security::SecurityPolicy;
 use crate::security::policy::ToolOperation;
 use async_trait::async_trait;
@@ -26,6 +26,10 @@ impl ReactionTool {
 impl Tool for ReactionTool {
     fn name(&self) -> &str {
         "reaction"
+    }
+
+    fn category(&self) -> ToolCategory {
+        ToolCategory::CommunicationTools
     }
 
     fn description(&self) -> &str {

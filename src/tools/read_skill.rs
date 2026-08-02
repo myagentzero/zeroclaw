@@ -1,4 +1,4 @@
-use super::traits::{Tool, ToolResult};
+use super::traits::{Tool, ToolCategory, ToolResult};
 use async_trait::async_trait;
 use serde_json::json;
 use std::path::PathBuf;
@@ -28,6 +28,10 @@ impl ReadSkillTool {
 impl Tool for ReadSkillTool {
     fn name(&self) -> &str {
         "read_skill"
+    }
+
+    fn category(&self) -> ToolCategory {
+        ToolCategory::FileTools
     }
 
     fn description(&self) -> &str {

@@ -1,4 +1,4 @@
-use super::traits::{Tool, ToolResult};
+use super::traits::{Tool, ToolCategory, ToolResult};
 use crate::security::SecurityPolicy;
 use async_trait::async_trait;
 use serde_json::json;
@@ -67,6 +67,10 @@ impl FileRemoveTool {
 impl Tool for FileRemoveTool {
     fn name(&self) -> &str {
         "file_remove"
+    }
+
+    fn category(&self) -> ToolCategory {
+        ToolCategory::FileTools
     }
 
     fn description(&self) -> &str {

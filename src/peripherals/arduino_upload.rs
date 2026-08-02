@@ -4,7 +4,7 @@
 //! sketch code and calls this tool. AgentZero compiles and uploads it — no
 //! manual IDE or file editing.
 
-use crate::tools::traits::{Tool, ToolResult};
+use crate::tools::traits::{Tool, ToolCategory, ToolResult};
 use async_trait::async_trait;
 use serde_json::{Value, json};
 use std::process::Command;
@@ -25,6 +25,10 @@ impl ArduinoUploadTool {
 impl Tool for ArduinoUploadTool {
     fn name(&self) -> &str {
         "arduino_upload"
+    }
+
+    fn category(&self) -> ToolCategory {
+        ToolCategory::HardwareTools
     }
 
     fn description(&self) -> &str {

@@ -1,4 +1,4 @@
-use super::traits::{Tool, ToolResult};
+use super::traits::{Tool, ToolCategory, ToolResult};
 use super::web_search_provider_routing::{WebSearchProviderRoute, resolve_web_search_provider};
 use crate::config::schema::DEFAULT_USER_AGENT;
 use async_trait::async_trait;
@@ -390,6 +390,10 @@ fn strip_tags(content: &str) -> String {
 impl Tool for WebSearchTool {
     fn name(&self) -> &str {
         "web_search_tool"
+    }
+
+    fn category(&self) -> ToolCategory {
+        ToolCategory::WebTools
     }
 
     fn description(&self) -> &str {

@@ -1,5 +1,6 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use std::fmt;
 
 /// Result of a tool execution
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -9,12 +10,61 @@ pub struct ToolResult {
     pub error: Option<String>,
 }
 
+/// Broad grouping used to organize tools when presenting them to the LLM.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum ToolCategory {
+    /// Reading, writing, and searching files and directories.
+    FileTools,
+    /// Shell execution, version control, and source-hosting integrations.
+    DeveloperTools,
+    /// Browser automation, HTTP requests, and web search/fetch.
+    WebTools,
+    /// Scheduling, background jobs, and runtime/provider status.
+    RuntimeTools,
+    /// Long-term memory storage and recall.
+    MemoryTools,
+    /// Task tracking, delegation, sub-agents, and multi-step pipelines.
+    OrchestrationTools,
+    /// Third-party service integrations (Jira, Notion, GitHub API, etc).
+    IntegrationTools,
+    /// User interaction and messaging.
+    CommunicationTools,
+    /// Hardware peripherals and embedded boards.
+    HardwareTools,
+    /// Small standalone utilities (calculator, weather, local context).
+    UtilityTools,
+    /// Fallback for tools that don't fit another category.
+    #[default]
+    Other,
+}
+
+impl fmt::Display for ToolCategory {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let label = match self {
+            Self::FileTools => "File Tools",
+            Self::DeveloperTools => "Developer Tools",
+            Self::WebTools => "Web Tools",
+            Self::RuntimeTools => "Runtime Tools",
+            Self::MemoryTools => "Memory Tools",
+            Self::OrchestrationTools => "Orchestration Tools",
+            Self::IntegrationTools => "Integration Tools",
+            Self::CommunicationTools => "Communication Tools",
+            Self::HardwareTools => "Hardware Tools",
+            Self::UtilityTools => "Utility Tools",
+            Self::Other => "Other Tools",
+        };
+        f.write_str(label)
+    }
+}
+
 /// Description of a tool for the LLM
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ToolSpec {
     pub name: String,
     pub description: String,
     pub parameters: serde_json::Value,
+    #[serde(default)]
+    pub category: ToolCategory,
 }
 
 /// Core tool trait — implement for any capability
@@ -29,6 +79,11 @@ pub trait Tool: Send + Sync {
     /// JSON schema for parameters
     fn parameters_schema(&self) -> serde_json::Value;
 
+    /// Category used to group this tool in LLM-facing tool instructions.
+    fn category(&self) -> ToolCategory {
+        ToolCategory::Other
+    }
+
     /// Execute the tool with given arguments
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult>;
 
@@ -38,6 +93,7 @@ pub trait Tool: Send + Sync {
             name: self.name().to_string(),
             description: self.description().to_string(),
             parameters: self.parameters_schema(),
+            category: self.category(),
         }
     }
 }

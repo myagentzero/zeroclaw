@@ -29,7 +29,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 use tokio::time::{Duration, timeout};
 
-use super::traits::{Tool, ToolResult};
+use super::traits::{Tool, ToolCategory, ToolResult};
 
 /// Hard timeout for background tool execution (seconds).
 const BG_TOOL_TIMEOUT_SECS: u64 = 600;
@@ -247,6 +247,10 @@ impl Tool for BgRunTool {
         "bg_run"
     }
 
+    fn category(&self) -> ToolCategory {
+        ToolCategory::RuntimeTools
+    }
+
     fn description(&self) -> &str {
         "Run a tool in background. Max 600s timeout. Check results with bg_status."
     }
@@ -460,6 +464,10 @@ impl BgStatusTool {
 impl Tool for BgStatusTool {
     fn name(&self) -> &str {
         "bg_status"
+    }
+
+    fn category(&self) -> ToolCategory {
+        ToolCategory::RuntimeTools
     }
 
     fn description(&self) -> &str {

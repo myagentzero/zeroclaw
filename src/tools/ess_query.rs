@@ -1,4 +1,4 @@
-use super::traits::{Tool, ToolResult};
+use super::traits::{Tool, ToolCategory, ToolResult};
 use crate::security::{SecurityPolicy, policy::ToolOperation};
 use async_trait::async_trait;
 use elasticsearch::{
@@ -67,6 +67,10 @@ impl EssQueryTool {
 impl Tool for EssQueryTool {
     fn name(&self) -> &str {
         "ess_query"
+    }
+
+    fn category(&self) -> ToolCategory {
+        ToolCategory::IntegrationTools
     }
 
     fn description(&self) -> &str {

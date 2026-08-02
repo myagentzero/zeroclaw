@@ -3,7 +3,7 @@
 //!
 //! Only registered when the configured `default_provider` starts with `"custom:"`.
 
-use super::traits::{Tool, ToolResult};
+use super::traits::{Tool, ToolCategory, ToolResult};
 use crate::config::Config;
 use async_trait::async_trait;
 use chrono::{DateTime, FixedOffset, Utc};
@@ -131,6 +131,10 @@ impl ProviderStatusTool {
 impl Tool for ProviderStatusTool {
     fn name(&self) -> &str {
         "provider_status"
+    }
+
+    fn category(&self) -> ToolCategory {
+        ToolCategory::IntegrationTools
     }
 
     fn description(&self) -> &str {

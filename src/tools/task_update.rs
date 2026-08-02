@@ -6,7 +6,7 @@
 //! Completing a task automatically unblocks any tasks that were waiting on it.
 
 use super::task_registry::{TaskRegistry, TaskStatus, TaskUpdateRequest};
-use super::traits::{Tool, ToolResult};
+use super::traits::{Tool, ToolCategory, ToolResult};
 use async_trait::async_trait;
 use serde_json::json;
 use std::sync::Arc;
@@ -41,6 +41,10 @@ fn string_array(args: &serde_json::Value, field: &str) -> Vec<String> {
 impl Tool for TaskUpdateTool {
     fn name(&self) -> &str {
         "task_update"
+    }
+
+    fn category(&self) -> ToolCategory {
+        ToolCategory::OrchestrationTools
     }
 
     fn description(&self) -> &str {

@@ -5,7 +5,7 @@
 // interpolation between steps.
 
 use crate::config::PipelineConfig;
-use crate::tools::traits::{Tool, ToolResult};
+use crate::tools::traits::{Tool, ToolCategory, ToolResult};
 use anyhow::Result;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -225,6 +225,10 @@ impl PipelineTool {
 impl Tool for PipelineTool {
     fn name(&self) -> &str {
         "execute_pipeline"
+    }
+
+    fn category(&self) -> ToolCategory {
+        ToolCategory::OrchestrationTools
     }
 
     fn description(&self) -> &str {

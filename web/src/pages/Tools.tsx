@@ -7,9 +7,53 @@ import {
   Package,
   Activity,
   Clock,
+  Folder,
 } from 'lucide-react';
 import type { ToolSpec } from '@/types/api';
 import { getTools } from '@/lib/api';
+
+const UNCATEGORIZED = 'Other Tools';
+
+// Mirrors the category order used when building LLM tool instructions
+// (see `group_tool_specs_by_category` in `src/agent/prompt.rs`) so the
+// dashboard and the agent's own view of its tools stay consistent.
+const CATEGORY_ORDER = [
+  'File Tools',
+  'Developer Tools',
+  'Web Tools',
+  'Runtime Tools',
+  'Memory Tools',
+  'Orchestration Tools',
+  'Integration Tools',
+  'Communication Tools',
+  'Hardware Tools',
+  'Utility Tools',
+  UNCATEGORIZED,
+];
+
+function groupToolsByCategory(
+  tools: ToolSpec[],
+): { category: string; tools: ToolSpec[] }[] {
+  const groups = new Map<string, ToolSpec[]>();
+  for (const tool of tools) {
+    const category = tool.category || UNCATEGORIZED;
+    const existing = groups.get(category);
+    if (existing) {
+      existing.push(tool);
+    } else {
+      groups.set(category, [tool]);
+    }
+  }
+
+  const orderIndex = (category: string) => {
+    const idx = CATEGORY_ORDER.indexOf(category);
+    return idx === -1 ? CATEGORY_ORDER.length : idx;
+  };
+
+  return Array.from(groups.entries())
+    .map(([category, tools]) => ({ category, tools }))
+    .sort((a, b) => orderIndex(a.category) - orderIndex(b.category));
+}
 
 function formatLastCalled(iso: string): string {
   const date = new Date(iso);
@@ -43,6 +87,7 @@ export default function Tools() {
       t.name.toLowerCase().includes(search.toLowerCase()) ||
       t.description.toLowerCase().includes(search.toLowerCase()),
   );
+  const groups = groupToolsByCategory(filtered);
 
   if (error) {
     return (
@@ -88,69 +133,86 @@ export default function Tools() {
         {filtered.length === 0 ? (
           <p className="text-sm text-gray-500">No tools match your search.</p>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-            {filtered.map((tool) => {
-              const isExpanded = expandedTool === tool.name;
-              return (
-                <div
-                  key={tool.name}
-                  className="bg-gray-900 rounded-xl border border-gray-800 overflow-hidden"
-                >
-                  <button
-                    onClick={() =>
-                      setExpandedTool(isExpanded ? null : tool.name)
-                    }
-                    className="w-full text-left p-4 hover:bg-gray-800/50 transition-colors"
-                  >
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="flex items-center gap-2 min-w-0">
-                        <Package className="h-4 w-4 text-blue-400 flex-shrink-0 mt-0.5" />
-                        <h3 className="text-sm font-semibold text-white truncate">
-                          {tool.name}
-                        </h3>
-                      </div>
-                      {isExpanded ? (
-                        <ChevronDown className="h-4 w-4 text-gray-400 flex-shrink-0" />
-                      ) : (
-                        <ChevronRight className="h-4 w-4 text-gray-400 flex-shrink-0" />
-                      )}
-                    </div>
-                    <p className="text-sm text-gray-400 mt-2 line-clamp-2">
-                      {tool.description}
-                    </p>
-                    {tool.usage ? (
-                      <div className="flex items-center gap-3 mt-2">
-                        <span className="inline-flex items-center gap-1 text-xs text-blue-400">
-                          <Activity className="h-3 w-3" />
-                          {tool.usage.call_count === 1
-                            ? '1 call'
-                            : `${tool.usage.call_count} calls`}
-                        </span>
-                        <span className="inline-flex items-center gap-1 text-xs text-gray-500">
-                          <Clock className="h-3 w-3" />
-                          {formatLastCalled(tool.usage.last_called)}
-                        </span>
-                      </div>
-                    ) : (
-                      <div className="mt-2">
-                        <span className="text-xs text-gray-600">never used</span>
-                      </div>
-                    )}
-                  </button>
-
-                  {isExpanded && tool.parameters && (
-                    <div className="border-t border-gray-800 p-4">
-                      <p className="text-xs text-gray-500 mb-2 font-medium uppercase tracking-wider">
-                        Parameter Schema
-                      </p>
-                      <pre className="text-xs text-gray-300 bg-gray-950 rounded-lg p-3 overflow-x-auto max-h-64 overflow-y-auto">
-                        {JSON.stringify(tool.parameters, null, 2)}
-                      </pre>
-                    </div>
-                  )}
+          <div className="space-y-8">
+            {groups.map(({ category, tools: categoryTools }) => (
+              <div key={category}>
+                <div className="flex items-center gap-2 mb-3">
+                  <Folder className="h-4 w-4 text-gray-500" />
+                  <h3 className="text-sm font-semibold text-gray-300">
+                    {category}
+                  </h3>
+                  <span className="text-xs text-gray-600">
+                    ({categoryTools.length})
+                  </span>
                 </div>
-              );
-            })}
+                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                  {categoryTools.map((tool) => {
+                    const isExpanded = expandedTool === tool.name;
+                    return (
+                      <div
+                        key={tool.name}
+                        className="bg-gray-900 rounded-xl border border-gray-800 overflow-hidden"
+                      >
+                        <button
+                          onClick={() =>
+                            setExpandedTool(isExpanded ? null : tool.name)
+                          }
+                          className="w-full text-left p-4 hover:bg-gray-800/50 transition-colors"
+                        >
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="flex items-center gap-2 min-w-0">
+                              <Package className="h-4 w-4 text-blue-400 flex-shrink-0 mt-0.5" />
+                              <h3 className="text-sm font-semibold text-white truncate">
+                                {tool.name}
+                              </h3>
+                            </div>
+                            {isExpanded ? (
+                              <ChevronDown className="h-4 w-4 text-gray-400 flex-shrink-0" />
+                            ) : (
+                              <ChevronRight className="h-4 w-4 text-gray-400 flex-shrink-0" />
+                            )}
+                          </div>
+                          <p className="text-sm text-gray-400 mt-2 line-clamp-2">
+                            {tool.description}
+                          </p>
+                          {tool.usage ? (
+                            <div className="flex items-center gap-3 mt-2">
+                              <span className="inline-flex items-center gap-1 text-xs text-blue-400">
+                                <Activity className="h-3 w-3" />
+                                {tool.usage.call_count === 1
+                                  ? '1 call'
+                                  : `${tool.usage.call_count} calls`}
+                              </span>
+                              <span className="inline-flex items-center gap-1 text-xs text-gray-500">
+                                <Clock className="h-3 w-3" />
+                                {formatLastCalled(tool.usage.last_called)}
+                              </span>
+                            </div>
+                          ) : (
+                            <div className="mt-2">
+                              <span className="text-xs text-gray-600">
+                                never used
+                              </span>
+                            </div>
+                          )}
+                        </button>
+
+                        {isExpanded && tool.parameters && (
+                          <div className="border-t border-gray-800 p-4">
+                            <p className="text-xs text-gray-500 mb-2 font-medium uppercase tracking-wider">
+                              Parameter Schema
+                            </p>
+                            <pre className="text-xs text-gray-300 bg-gray-950 rounded-lg p-3 overflow-x-auto max-h-64 overflow-y-auto">
+                              {JSON.stringify(tool.parameters, null, 2)}
+                            </pre>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
           </div>
         )}
       </div>

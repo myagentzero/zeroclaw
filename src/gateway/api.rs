@@ -245,6 +245,7 @@ pub async fn handle_api_tools(
                 "name": spec.name,
                 "description": spec.description,
                 "parameters": spec.parameters,
+                "category": spec.category.to_string(),
                 "usage": usage,
             })
         })

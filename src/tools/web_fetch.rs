@@ -1,4 +1,4 @@
-use super::traits::{Tool, ToolResult};
+use super::traits::{Tool, ToolCategory, ToolResult};
 use crate::config::schema::{DEFAULT_USER_AGENT, FirecrawlConfig};
 use crate::security::SecurityPolicy;
 use async_trait::async_trait;
@@ -263,6 +263,10 @@ impl WebFetchTool {
 impl Tool for WebFetchTool {
     fn name(&self) -> &str {
         "web_fetch"
+    }
+
+    fn category(&self) -> ToolCategory {
+        ToolCategory::WebTools
     }
 
     fn description(&self) -> &str {

@@ -3,7 +3,7 @@
 //! When AgentZero runs on Uno Q, the Bridge app (Python + MCU) exposes
 //! digitalWrite/digitalRead over a local socket. These tools connect to it.
 
-use crate::tools::traits::{Tool, ToolResult};
+use crate::tools::traits::{Tool, ToolCategory, ToolResult};
 use async_trait::async_trait;
 use serde_json::{Value, json};
 use std::time::Duration;
@@ -37,6 +37,10 @@ pub struct UnoQGpioReadTool;
 impl Tool for UnoQGpioReadTool {
     fn name(&self) -> &str {
         "gpio_read"
+    }
+
+    fn category(&self) -> ToolCategory {
+        ToolCategory::HardwareTools
     }
 
     fn description(&self) -> &str {
@@ -93,6 +97,10 @@ pub struct UnoQGpioWriteTool;
 impl Tool for UnoQGpioWriteTool {
     fn name(&self) -> &str {
         "gpio_write"
+    }
+
+    fn category(&self) -> ToolCategory {
+        ToolCategory::HardwareTools
     }
 
     fn description(&self) -> &str {

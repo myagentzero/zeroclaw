@@ -488,6 +488,7 @@ impl OpenAiCompatibleProvider {
                     name: name.to_string(),
                     description,
                     parameters,
+                    ..Default::default()
                 })
             })
             .collect()
@@ -3821,6 +3822,7 @@ mod tests {
                 "properties": {"command": {"type": "string"}},
                 "required": ["command"]
             }),
+            ..Default::default()
         }];
         let result = provider
             .chat(
@@ -4342,6 +4344,7 @@ mod tests {
                 },
                 "required": ["command"]
             }),
+            ..Default::default()
         }];
 
         let output =
@@ -4525,6 +4528,7 @@ mod tests {
                 "properties": {"command": {"type": "string"}},
                 "required": ["command"]
             }),
+            ..Default::default()
         }];
 
         let tools = OpenAiCompatibleProvider::tool_specs_to_openai_format(&specs, "gpt-4");
@@ -4894,6 +4898,7 @@ mod tests {
                 },
                 "required": ["city"]
             }),
+            ..Default::default()
         }];
 
         let result = provider
@@ -5061,6 +5066,7 @@ mod tests {
                 "properties": {"city": {"type": "string"}},
                 "required": ["city"]
             }),
+            ..Default::default()
         }];
 
         let err = provider

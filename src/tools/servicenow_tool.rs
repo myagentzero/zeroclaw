@@ -1,4 +1,4 @@
-use super::traits::{Tool, ToolResult};
+use super::traits::{Tool, ToolCategory, ToolResult};
 use crate::security::{SecurityPolicy, policy::ToolOperation};
 use async_trait::async_trait;
 use reqwest::Client;
@@ -327,6 +327,10 @@ impl ServiceNowTool {
 impl Tool for ServiceNowTool {
     fn name(&self) -> &str {
         "servicenow"
+    }
+
+    fn category(&self) -> ToolCategory {
+        ToolCategory::IntegrationTools
     }
 
     fn description(&self) -> &str {
