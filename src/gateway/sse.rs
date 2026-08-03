@@ -43,12 +43,41 @@ fn evaluate_sse_auth(
     None
 }
 
-/// Flatten common tool-event payload fields onto the SSE JSON object for display.
-fn flatten_tool_event_fields(obj: &mut serde_json::Value, payload: &serde_json::Value) {
+/// Maximum characters kept for large free-text fields (tool output, raw model
+/// responses, delivered channel replies) before they're sent over the SSE
+/// wire. The untruncated content remains available in the runtime trace file.
+const SSE_TEXT_FIELD_MAX_CHARS: usize = 4_000;
+
+/// Payload keys known to carry large free-text content that should be capped
+/// before broadcasting, to avoid pushing multi-hundred-KB events to clients.
+const SSE_LARGE_TEXT_KEYS: &[&str] = &["output", "arguments", "text", "response", "raw_response"];
+
+/// Truncate known large free-text fields in a payload object, in place.
+fn cap_large_text_fields(payload: &mut serde_json::Value) {
+    let Some(map) = payload.as_object_mut() else {
+        return;
+    };
+    for key in SSE_LARGE_TEXT_KEYS {
+        if let Some(serde_json::Value::String(s)) = map.get_mut(*key) {
+            if s.chars().count() > SSE_TEXT_FIELD_MAX_CHARS {
+                *s = crate::util::truncate_with_ellipsis(s, SSE_TEXT_FIELD_MAX_CHARS);
+            }
+        }
+    }
+}
+
+/// Flatten common tool-event payload fields onto the SSE JSON object for
+/// display, then remove them from the nested `payload` so large fields
+/// (e.g. `output`) aren't duplicated on the wire.
+fn flatten_tool_event_fields(obj: &mut serde_json::Value, payload: &mut serde_json::Value) {
     for key in ["tool", "arguments", "output", "duration_ms", "iteration"] {
         if let Some(value) = payload.get(key) {
             obj[key] = value.clone();
         }
+    }
+    if let Some(map) = payload.as_object_mut() {
+        map.remove("output");
+        map.remove("arguments");
     }
 }
 
@@ -79,16 +108,10 @@ fn runtime_trace_event_to_sse_json(event: &RuntimeTraceEvent) -> Option<serde_js
         obj["message"] = serde_json::Value::String(message.clone());
     }
 
-    // Add entire payload object
-    if !event.payload.is_null()
-        && !event
-            .payload
-            .as_object()
-            .map(|o| o.is_empty())
-            .unwrap_or(true)
-    {
-        obj["payload"] = event.payload.clone();
-    }
+    // Add entire payload object (large text fields capped, see below)
+    let mut payload = event.payload.clone();
+    let has_payload =
+        !payload.is_null() && !payload.as_object().map(|o| o.is_empty()).unwrap_or(true);
 
     // Only return if this is a known event type
     match event_type {
@@ -102,13 +125,24 @@ fn runtime_trace_event_to_sse_json(event: &RuntimeTraceEvent) -> Option<serde_js
         | "llm_response"
         | "turn_complete"
         | "channel_message"
+        | "channel_message_inbound"
+        | "channel_message_outbound"
         | "webhook_auth_failure"
-        | "heartbeat_tick" => {
+        | "heartbeat_tick"
+        | "stop_reason_observed"
+        | "turn_final_response"
+        | "tool_call_followthrough_retry" => {
+            if has_payload {
+                cap_large_text_fields(&mut payload);
+            }
             if matches!(
                 event_type,
                 "tool_call" | "tool_call_start" | "tool_call_result"
             ) {
-                flatten_tool_event_fields(&mut obj, &event.payload);
+                flatten_tool_event_fields(&mut obj, &mut payload);
+            }
+            if has_payload {
+                obj["payload"] = payload;
             }
             Some(obj)
         }
@@ -289,7 +323,9 @@ impl crate::observability::Observer for BroadcastObserver {
                     "timestamp": chrono::Utc::now().to_rfc3339(),
                 });
                 if let Some(output) = output {
-                    json["output"] = serde_json::Value::String(output.clone());
+                    json["output"] = serde_json::Value::String(
+                        crate::util::truncate_with_ellipsis(output, SSE_TEXT_FIELD_MAX_CHARS),
+                    );
                 }
                 json
             }
@@ -498,6 +534,67 @@ mod tests {
         assert_eq!(json["tool"], "shell");
         assert_eq!(json["duration_ms"], 99);
         assert_eq!(json["output"], "hello world");
+    }
+
+    #[test]
+    fn backfill_conversion_does_not_duplicate_large_output_in_payload() {
+        let mut event = make_trace_event("tool_call_result");
+        event.payload = serde_json::json!({
+            "tool": "shell",
+            "duration_ms": 99,
+            "output": "hello world",
+        });
+        let json = runtime_trace_event_to_sse_json(&event).unwrap();
+        assert_eq!(json["output"], "hello world");
+        assert!(
+            json["payload"].get("output").is_none(),
+            "output should not be duplicated inside payload once flattened"
+        );
+    }
+
+    #[test]
+    fn backfill_conversion_caps_large_text_fields() {
+        let mut event = make_trace_event("tool_call_result");
+        let huge = "x".repeat(SSE_TEXT_FIELD_MAX_CHARS + 500);
+        event.payload = serde_json::json!({
+            "tool": "shell",
+            "duration_ms": 99,
+            "output": huge,
+        });
+        let json = runtime_trace_event_to_sse_json(&event).unwrap();
+        let output = json["output"].as_str().unwrap();
+        assert!(output.ends_with("..."));
+        assert!(output.chars().count() <= SSE_TEXT_FIELD_MAX_CHARS + 3);
+    }
+
+    #[test]
+    fn backfill_conversion_recognizes_turn_lifecycle_event_types() {
+        for event_type in [
+            "stop_reason_observed",
+            "turn_final_response",
+            "channel_message_inbound",
+            "channel_message_outbound",
+            "tool_call_followthrough_retry",
+        ] {
+            let event = make_trace_event(event_type);
+            assert!(
+                runtime_trace_event_to_sse_json(&event).is_some(),
+                "expected Some for event_type={event_type}"
+            );
+        }
+    }
+
+    #[test]
+    fn backfill_conversion_caps_turn_final_response_text() {
+        let mut event = make_trace_event("turn_final_response");
+        let huge = "y".repeat(SSE_TEXT_FIELD_MAX_CHARS + 500);
+        event.payload = serde_json::json!({
+            "iteration": 1,
+            "text": huge,
+        });
+        let json = runtime_trace_event_to_sse_json(&event).unwrap();
+        let text = json["payload"]["text"].as_str().unwrap();
+        assert!(text.chars().count() <= SSE_TEXT_FIELD_MAX_CHARS + 3);
     }
 
     #[test]

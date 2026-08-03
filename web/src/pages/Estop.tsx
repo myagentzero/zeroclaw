@@ -1,8 +1,7 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState } from 'react';
 import { OctagonAlert, ShieldCheck, Globe, Ban, Wrench, KeyRound } from 'lucide-react';
-import type { EstopStatus } from '@/types/api';
-import { getEstopStatus, engageEstop, resumeEstop, type EstopEngageLevel } from '@/lib/api';
-import { useSSE } from '@/hooks/useSSE';
+import { engageEstop, resumeEstop, type EstopEngageLevel } from '@/lib/api';
+import { useEstopStatus } from '@/hooks/EstopProvider';
 
 type ResumeArgs = Parameters<typeof resumeEstop>[0];
 
@@ -21,10 +20,7 @@ function Badge({ active, activeLabel, inactiveLabel }: { active: boolean; active
 }
 
 export default function Estop() {
-  const [status, setStatus] = useState<EstopStatus | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [loadError, setLoadError] = useState<string | null>(null);
-  const [disabled, setDisabled] = useState(false);
+  const { status, loading, disabled, loadError, setStatus } = useEstopStatus();
 
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -34,49 +30,6 @@ export default function Estop() {
   const [toolInput, setToolInput] = useState('');
   const [otpPrompt, setOtpPrompt] = useState<ResumeArgs | null>(null);
   const [otpCode, setOtpCode] = useState('');
-
-  const { events } = useSSE({ filterTypes: ['estop_status'] });
-
-  const refresh = useCallback(async () => {
-    try {
-      const data = await getEstopStatus();
-      setStatus(data);
-      setDisabled(false);
-      setLoadError(null);
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Failed to load estop status';
-      if (message.toLowerCase().includes('disabled')) {
-        setDisabled(true);
-      } else {
-        setLoadError(message);
-      }
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    refresh();
-  }, [refresh]);
-
-  useEffect(() => {
-    const last = events[events.length - 1];
-    if (!last) return;
-    setStatus((prev) => ({
-      enabled: true,
-      is_engaged: Boolean(last.is_engaged),
-      kill_all: Boolean(last.kill_all),
-      network_kill: Boolean(last.network_kill),
-      blocked_domains: Array.isArray(last.blocked_domains)
-        ? (last.blocked_domains as string[])
-        : prev?.blocked_domains ?? [],
-      frozen_tools: Array.isArray(last.frozen_tools)
-        ? (last.frozen_tools as string[])
-        : prev?.frozen_tools ?? [],
-      updated_at: (last.updated_at as string | undefined) ?? prev?.updated_at ?? null,
-      require_otp_to_resume: prev?.require_otp_to_resume ?? false,
-    }));
-  }, [events]);
 
   const doEngage = async (level: EstopEngageLevel, opts: { domains?: string[]; tools?: string[] } = {}) => {
     setBusy(true);

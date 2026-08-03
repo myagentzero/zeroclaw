@@ -1,11 +1,13 @@
-import { Outlet } from 'react-router-dom';
+import { Outlet, useLocation } from 'react-router-dom';
 import { useState } from 'react';
 import Sidebar from '@/components/layout/Sidebar';
 import Header from '@/components/layout/Header';
+import { ErrorBoundary } from '@/components/ErrorBoundary';
 
 const SIDEBAR_COLLAPSED_KEY = 'agentzero:sidebar-collapsed';
 
 export default function Layout() {
+  const location = useLocation();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(() => {
     if (typeof window === 'undefined') {
@@ -46,7 +48,9 @@ export default function Layout() {
         />
 
         <main className="flex-1 overflow-y-auto px-4 pb-8 pt-5 md:px-8 md:pt-8">
-          <Outlet />
+          <ErrorBoundary key={location.pathname}>
+            <Outlet />
+          </ErrorBoundary>
         </main>
       </div>
     </div>

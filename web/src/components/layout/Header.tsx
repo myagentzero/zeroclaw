@@ -3,7 +3,7 @@ import { LogOut, Menu, PanelLeftClose, PanelLeftOpen, OctagonAlert } from 'lucid
 import { t, LANGUAGE_BUTTON_LABELS, LANGUAGE_SWITCH_ORDER } from '@/lib/i18n';
 import { useLocaleContext } from '@/App';
 import { useAuth } from '@/hooks/useAuth';
-import { useEstopStatus } from '@/hooks/useEstopStatus';
+import { useEstopStatus } from '@/hooks/EstopProvider';
 
 const routeTitles: Record<string, string> = {
   '/': 'nav.dashboard',

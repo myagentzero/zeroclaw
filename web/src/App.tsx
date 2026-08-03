@@ -17,6 +17,8 @@ import Doctor from './pages/Doctor';
 import Workspace from './pages/Workspace';
 import Estop from './pages/Estop';
 import { AuthProvider, useAuth } from './hooks/useAuth';
+import { SSEProvider } from './hooks/SSEProvider';
+import { EstopProvider } from './hooks/EstopProvider';
 import { coerceLocale, setLocale, type Locale } from './lib/i18n';
 
 const LOCALE_STORAGE_KEY = 'agentzero:locale';
@@ -138,26 +140,30 @@ function AppContent() {
 
   return (
     <LocaleContext.Provider value={{ locale, setAppLocale }}>
-      <Routes>
-        <Route element={<Layout />}>
-          <Route path="/" element={<Dashboard />} />
-          <Route path="/agent" element={<AgentChat />} />
-          <Route path="/tools" element={<Tools />} />
-          <Route path="/skills" element={<Skills />} />
-          <Route path="/cron" element={<Cron />} />
-          <Route path="/tasks" element={<Tasks />} />
-          <Route path="/integrations" element={<Integrations />} />
-          <Route path="/memory" element={<Memory />} />
-          <Route path="/devices" element={<Devices />} />
-          <Route path="/config" element={<Config />} />
-          <Route path="/cost" element={<Cost />} />
-          <Route path="/mission-control" element={<MissionControl />} />
-          <Route path="/doctor" element={<Doctor />} />
-          <Route path="/workspace" element={<Workspace />} />
-          <Route path="/estop" element={<Estop />} />
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Route>
-      </Routes>
+      <SSEProvider>
+        <EstopProvider>
+          <Routes>
+            <Route element={<Layout />}>
+              <Route path="/" element={<Dashboard />} />
+              <Route path="/agent" element={<AgentChat />} />
+              <Route path="/tools" element={<Tools />} />
+              <Route path="/skills" element={<Skills />} />
+              <Route path="/cron" element={<Cron />} />
+              <Route path="/tasks" element={<Tasks />} />
+              <Route path="/integrations" element={<Integrations />} />
+              <Route path="/memory" element={<Memory />} />
+              <Route path="/devices" element={<Devices />} />
+              <Route path="/config" element={<Config />} />
+              <Route path="/cost" element={<Cost />} />
+              <Route path="/mission-control" element={<MissionControl />} />
+              <Route path="/doctor" element={<Doctor />} />
+              <Route path="/workspace" element={<Workspace />} />
+              <Route path="/estop" element={<Estop />} />
+              <Route path="*" element={<Navigate to="/" replace />} />
+            </Route>
+          </Routes>
+        </EstopProvider>
+      </SSEProvider>
     </LocaleContext.Provider>
   );
 }

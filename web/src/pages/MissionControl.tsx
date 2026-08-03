@@ -8,7 +8,7 @@ import {
   X,
 } from 'lucide-react';
 import type { SSEEvent } from '@/types/api';
-import { SSEClient } from '@/lib/sse';
+import { useSharedSSE } from '@/hooks/SSEProvider';
 
 function normalizeProviderForDisplay(value: unknown): unknown {
   if (typeof value === 'string' && value.toLowerCase().startsWith('custom:')) {
@@ -127,9 +127,17 @@ function eventTypeBadgeColor(type: string): string {
     case 'turn_complete':
       return 'bg-lime-900/50 text-lime-400 border-lime-700/50';
     case 'channel_message':
+    case 'channel_message_inbound':
+    case 'channel_message_outbound':
       return 'bg-rose-900/50 text-rose-400 border-rose-700/50';
     case 'webhook_auth_failure':
       return 'bg-orange-900/50 text-orange-400 border-orange-700/50';
+    case 'stop_reason_observed':
+      return 'bg-teal-900/50 text-teal-400 border-teal-700/50';
+    case 'turn_final_response':
+      return 'bg-lime-900/50 text-lime-400 border-lime-700/50';
+    case 'tool_call_followthrough_retry':
+      return 'bg-yellow-900/50 text-yellow-400 border-yellow-700/50';
     default:
       return 'bg-gray-800 text-gray-400 border-gray-700';
   }
@@ -141,55 +149,46 @@ interface LogEntry {
 }
 
 export default function MissionControl() {
+  const { events: sharedEvents, status: sseStatus } = useSharedSSE();
   const [entries, setEntries] = useState<LogEntry[]>([]);
   const [paused, setPaused] = useState(false);
-  const [connected, setConnected] = useState(false);
   const [autoScroll, setAutoScroll] = useState(true);
   const [typeFilters, setTypeFilters] = useState<Set<string>>(new Set());
   const [selectedEntry, setSelectedEntry] = useState<LogEntry | null>(null);
 
   const containerRef = useRef<HTMLDivElement>(null);
-  const sseRef = useRef<SSEClient | null>(null);
   const pausedRef = useRef(false);
   const entryIdRef = useRef(0);
+  // How many of the shared feed's events have already been turned into
+  // LogEntry rows (or intentionally skipped while paused).
+  const processedCountRef = useRef(0);
+
+  const connected = sseStatus === 'connected';
 
   // Keep pausedRef in sync
   useEffect(() => {
     pausedRef.current = paused;
   }, [paused]);
 
+  // Consume newly arrived events from the app-wide shared SSE feed. Events
+  // that arrive while paused are marked as processed but dropped, matching
+  // the "freeze the log" behavior of the pause button.
   useEffect(() => {
-    const client = new SSEClient();
+    if (sharedEvents.length <= processedCountRef.current) return;
+    const newEvents = sharedEvents.slice(processedCountRef.current);
+    processedCountRef.current = sharedEvents.length;
+    if (pausedRef.current || newEvents.length === 0) return;
 
-    client.onConnect = () => {
-      setConnected(true);
-    };
-
-    client.onError = () => {
-      setConnected(false);
-    };
-
-    client.onEvent = (event: SSEEvent) => {
-      if (pausedRef.current) return;
+    const newEntries: LogEntry[] = newEvents.map((event: SSEEvent) => {
       entryIdRef.current += 1;
-      const entry: LogEntry = {
-        id: `log-${entryIdRef.current}`,
-        event,
-      };
-      setEntries((prev) => {
-        // Cap at 500 entries for performance
-        const next = [...prev, entry];
-        return next.length > 500 ? next.slice(-500) : next;
-      });
-    };
-
-    client.connect();
-    sseRef.current = client;
-
-    return () => {
-      client.disconnect();
-    };
-  }, []);
+      return { id: `log-${entryIdRef.current}`, event };
+    });
+    setEntries((prev) => {
+      const next = [...prev, ...newEntries];
+      // Cap at 500 entries for performance
+      return next.length > 500 ? next.slice(-500) : next;
+    });
+  }, [sharedEvents]);
 
   // Auto-scroll to bottom
   useEffect(() => {
@@ -370,6 +369,19 @@ export default function MissionControl() {
               detail = 'Agent completed turn';
             } else if (event.type === 'channel_message') {
               detail = `${event.direction === 'inbound' ? 'Received' : 'Sent'} on ${event.channel}`;
+            } else if (event.type === 'channel_message_inbound') {
+              const preview = event.payload?.content_preview;
+              detail = `Received on ${event.channel ?? 'unknown'}${typeof preview === 'string' ? `: ${preview}` : ''}`;
+            } else if (event.type === 'channel_message_outbound') {
+              const response = event.payload?.response;
+              detail = `Sent on ${event.channel ?? 'unknown'}${typeof response === 'string' ? `: ${response}` : ''}`;
+            } else if (event.type === 'stop_reason_observed') {
+              detail = `Stop reason: ${event.payload?.normalized_reason ?? 'unknown'}`;
+            } else if (event.type === 'turn_final_response') {
+              const text = event.payload?.text;
+              detail = typeof text === 'string' ? text : 'Agent produced final response';
+            } else if (event.type === 'tool_call_followthrough_retry') {
+              detail = `Retrying — response implied a tool call but none was emitted (iteration ${event.payload?.iteration ?? '?'})`;
             } else if (event.type === 'webhook_auth_failure') {
               detail = `Auth failure on ${event.channel} (signature: ${event.signature}, bearer: ${event.bearer})`;
             } else if (event.type === 'heartbeat_tick') {
