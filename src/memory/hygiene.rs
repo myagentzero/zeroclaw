@@ -78,6 +78,11 @@ pub fn run_if_due(config: &MemoryConfig, workspace_dir: &Path) -> Result<()> {
 
     write_state(workspace_dir, &report)?;
 
+    // Record run details in SQLite as a System memory (auto-pruned by retention).
+    if let Err(e) = record_hygiene_report(workspace_dir, &report) {
+        tracing::warn!("memory hygiene report not stored in sqlite: {e}");
+    }
+
     if report.total_actions() > 0 {
         tracing::info!(
             "memory hygiene complete: archived_memory={} archived_sessions={} purged_memory={} purged_sessions={} pruned_conversation_rows={} pruned_daily_rows={} pruned_system_rows={} pruned_auto_core_rows={}",
@@ -131,6 +136,42 @@ fn write_state(workspace_dir: &Path, report: &HygieneReport) -> Result<()> {
     };
     let json = serde_json::to_vec_pretty(&state)?;
     fs::write(path, json)?;
+    Ok(())
+}
+
+/// Insert hygiene run details into the SQLite memory DB as a `system` category row.
+///
+/// No-op when `brain.db` does not exist (non-SQLite backends / cold start before DB creation).
+fn record_hygiene_report(workspace_dir: &Path, report: &HygieneReport) -> Result<()> {
+    let db_path = workspace_dir.join("memory").join("brain.db");
+    if !db_path.exists() {
+        return Ok(());
+    }
+
+    let conn = Connection::open(db_path)?;
+    conn.execute_batch("PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL;")?;
+
+    let now = Utc::now().to_rfc3339();
+    let key = format!("hygiene_{}", now.replace(':', "-"));
+    let content = format!(
+        "Memory hygiene completed: archived_memory={} archived_sessions={} purged_memory={} purged_sessions={} pruned_conversation_rows={} pruned_daily_rows={} pruned_system_rows={} pruned_auto_core_rows={}",
+        report.archived_memory_files,
+        report.archived_session_files,
+        report.purged_memory_archives,
+        report.purged_session_archives,
+        report.pruned_conversation_rows,
+        report.pruned_daily_rows,
+        report.pruned_system_rows,
+        report.pruned_auto_core_rows,
+    );
+    let id = uuid::Uuid::new_v4().to_string();
+
+    conn.execute(
+        "INSERT INTO memories (id, key, content, category, created_at, updated_at)
+         VALUES (?1, ?2, ?3, 'system', ?4, ?4)",
+        params![id, key, content, now],
+    )?;
+
     Ok(())
 }
 
@@ -851,6 +892,59 @@ mod tests {
         assert!(
             !result.contains("old-record"),
             "old record should be pruned"
+        );
+    }
+
+    #[tokio::test]
+    async fn records_hygiene_run_as_system_memory() {
+        let tmp = TempDir::new().unwrap();
+        let workspace = tmp.path();
+
+        let mem = SqliteMemory::new(workspace).unwrap();
+        mem.store("core_keep", "durable", MemoryCategory::Core, None)
+            .await
+            .unwrap();
+        drop(mem);
+
+        let mut cfg = default_cfg();
+        cfg.archive_after_days = 0;
+        cfg.purge_after_days = 0;
+        cfg.conversation_retention_days = 0;
+        cfg.daily_retention_days = 0;
+        cfg.system_retention_days = 0;
+        cfg.core_auto_retention_days = 0;
+
+        run_if_due(&cfg, workspace).unwrap();
+
+        let mem2 = SqliteMemory::new(workspace).unwrap();
+        let system_entries = mem2
+            .list(Some(&MemoryCategory::System), None)
+            .await
+            .unwrap();
+        assert_eq!(
+            system_entries.len(),
+            1,
+            "hygiene should insert exactly one System memory"
+        );
+        assert!(
+            system_entries[0].key.starts_with("hygiene_"),
+            "hygiene system key should be prefixed with hygiene_"
+        );
+        assert!(
+            system_entries[0]
+                .content
+                .contains("Memory hygiene completed"),
+            "hygiene system content should describe the run"
+        );
+        assert!(
+            system_entries[0]
+                .content
+                .contains("pruned_auto_core_rows=0"),
+            "hygiene system content should include report counters"
+        );
+        assert!(
+            mem2.get("core_keep").await.unwrap().is_some(),
+            "existing core memory should remain"
         );
     }
 
