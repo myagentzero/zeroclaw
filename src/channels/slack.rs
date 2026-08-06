@@ -1238,6 +1238,17 @@ impl SlackChannel {
             }
         }
 
+        // `download_text_snippet` intentionally caps itself at a small size
+        // (SLACK_ATTACHMENT_TEXT_DOWNLOAD_MAX_BYTES) so large text/markdown
+        // files can't be inlined into the message. Rather than dropping the
+        // content entirely, save it to disk the same way non-text documents
+        // are handled so it still gets downloaded and made available.
+        if Self::is_probably_text_file(&file) {
+            if let Some(marker) = self.fetch_document_marker(&file).await {
+                return Some(marker);
+            }
+        }
+
         Some(Self::format_attachment_summary(&file))
     }
 
