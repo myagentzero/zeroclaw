@@ -1227,9 +1227,16 @@ impl SlackChannel {
             }
         }
 
-        let mut snippet = Self::file_text_preview(&file);
-        if snippet.is_none() && Self::is_probably_text_file(&file) {
+        // Slack's `preview`/`preview_highlight` fields are intentionally
+        // truncated (a short hover-preview snippet), not the full file
+        // content. Prefer a full download for text-like files and only fall
+        // back to the truncated preview if the download itself fails.
+        let mut snippet = None;
+        if Self::is_probably_text_file(&file) {
             snippet = self.download_text_snippet(&file).await;
+        }
+        if snippet.is_none() {
+            snippet = Self::file_text_preview(&file);
         }
 
         if let Some(text) = snippet {
