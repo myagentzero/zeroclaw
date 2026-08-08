@@ -1,3 +1,5 @@
+use super::embeddings::EmbeddingProvider;
+use super::vector;
 use crate::config::MemoryConfig;
 use anyhow::{Context, Result};
 use chrono::{DateTime, Duration, Local, NaiveDate, Utc};
@@ -8,8 +10,18 @@ use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::time::{Duration as StdDuration, SystemTime};
 
-const HYGIENE_INTERVAL_HOURS: i64 = 12;
+const HYGIENE_INTERVAL_HOURS: i64 = 19;
 const STATE_FILE: &str = "memory_hygiene_state.json";
+
+/// Max rows backfilled with embeddings per hygiene run. Bounds worst-case run
+/// time when many rows are missing embeddings; the remainder is picked up on
+/// subsequent (throttled) hygiene runs.
+const MAX_EMBEDDING_BACKFILL_PER_RUN: usize = 50;
+
+/// Stop attempting further embedding calls after this many consecutive
+/// failures in a single run, so a fully down/flaky provider doesn't burn a
+/// full request timeout (up to ~30s) per remaining row.
+const MAX_CONSECUTIVE_EMBEDDING_FAILURES: usize = 3;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 struct HygieneReport {
@@ -21,6 +33,7 @@ struct HygieneReport {
     pruned_daily_rows: u64,
     pruned_system_rows: u64,
     pruned_auto_core_rows: u64,
+    backfilled_embeddings: u64,
 }
 
 impl HygieneReport {
@@ -33,6 +46,7 @@ impl HygieneReport {
             + self.pruned_daily_rows
             + self.pruned_system_rows
             + self.pruned_auto_core_rows
+            + self.backfilled_embeddings
     }
 }
 
@@ -44,8 +58,16 @@ struct HygieneState {
 
 /// Run memory/session hygiene if the cadence window has elapsed.
 ///
+/// `embedder` is used to backfill missing embedding vectors when an embedding
+/// model is configured (i.e. `embedder.dimensions() > 0`); pass a `NoopEmbedding`
+/// to skip this step entirely.
+///
 /// This function is intentionally best-effort: callers should log and continue on failure.
-pub fn run_if_due(config: &MemoryConfig, workspace_dir: &Path) -> Result<()> {
+pub fn run_if_due(
+    config: &MemoryConfig,
+    workspace_dir: &Path,
+    embedder: &dyn EmbeddingProvider,
+) -> Result<()> {
     if !config.hygiene_enabled {
         return Ok(());
     }
@@ -72,6 +94,7 @@ pub fn run_if_due(config: &MemoryConfig, workspace_dir: &Path) -> Result<()> {
             workspace_dir,
             config.core_auto_retention_days,
         )?,
+        backfilled_embeddings: backfill_missing_embeddings(workspace_dir, embedder)?,
     };
 
     prune_cost_records(workspace_dir, config.cost_retention_days)?;
@@ -85,7 +108,7 @@ pub fn run_if_due(config: &MemoryConfig, workspace_dir: &Path) -> Result<()> {
 
     if report.total_actions() > 0 {
         tracing::info!(
-            "memory hygiene complete: archived_memory={} archived_sessions={} purged_memory={} purged_sessions={} pruned_conversation_rows={} pruned_daily_rows={} pruned_system_rows={} pruned_auto_core_rows={}",
+            "memory hygiene complete: archived_memory={} archived_sessions={} purged_memory={} purged_sessions={} pruned_conversation_rows={} pruned_daily_rows={} pruned_system_rows={} pruned_auto_core_rows={} backfilled_embeddings={}",
             report.archived_memory_files,
             report.archived_session_files,
             report.purged_memory_archives,
@@ -94,10 +117,126 @@ pub fn run_if_due(config: &MemoryConfig, workspace_dir: &Path) -> Result<()> {
             report.pruned_daily_rows,
             report.pruned_system_rows,
             report.pruned_auto_core_rows,
+            report.backfilled_embeddings,
         );
     }
 
     Ok(())
+}
+
+/// Backfill missing embedding vectors for memory rows.
+///
+/// No-op when no embedding model is configured (`embedder.dimensions() == 0`)
+/// or when `brain.db` does not exist yet. Runs the (async) embedding provider
+/// on a dedicated thread with its own runtime, since hygiene itself is
+/// synchronous and may be invoked from within an already-running Tokio runtime.
+///
+/// Bounded to `MAX_EMBEDDING_BACKFILL_PER_RUN` rows and stops early after
+/// `MAX_CONSECUTIVE_EMBEDDING_FAILURES` in a row, so a slow/flaky/down
+/// embedding provider can't turn a single hygiene run into a multi-hour
+/// stall. Any rows left over stay `NULL` and are retried on a later run.
+fn backfill_missing_embeddings(
+    workspace_dir: &Path,
+    embedder: &dyn EmbeddingProvider,
+) -> Result<u64> {
+    if embedder.dimensions() == 0 {
+        return Ok(0);
+    }
+
+    let db_path = workspace_dir.join("memory").join("brain.db");
+    if !db_path.exists() {
+        return Ok(0);
+    }
+
+    let conn = Connection::open(db_path)?;
+    conn.execute_batch("PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL;")?;
+
+    let missing: Vec<(String, String)> = {
+        let mut stmt =
+            conn.prepare("SELECT id, content FROM memories WHERE embedding IS NULL LIMIT ?1")?;
+        #[allow(clippy::cast_possible_wrap)]
+        let limit = MAX_EMBEDDING_BACKFILL_PER_RUN as i64;
+        stmt.query_map(params![limit], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?
+        .filter_map(std::result::Result::ok)
+        .collect()
+    };
+
+    if missing.is_empty() {
+        return Ok(0);
+    }
+
+    let texts: Vec<String> = missing.iter().map(|(_, content)| content.clone()).collect();
+    let embeddings = compute_embeddings_on_dedicated_thread(embedder, &texts);
+
+    let mut backfilled = 0_u64;
+    for ((id, _), embedding) in missing.iter().zip(embeddings) {
+        let Some(embedding) = embedding else { continue };
+        let bytes = vector::vec_to_bytes(&embedding);
+        conn.execute(
+            "UPDATE memories SET embedding = ?1 WHERE id = ?2",
+            params![bytes, id],
+        )?;
+        backfilled += 1;
+    }
+
+    Ok(backfilled)
+}
+
+/// Run `embedder.embed_one` for each text on a dedicated OS thread with its own
+/// single-threaded Tokio runtime, so this synchronous function can drive async
+/// embedding calls even when called from a thread already inside a Tokio runtime.
+fn compute_embeddings_on_dedicated_thread(
+    embedder: &dyn EmbeddingProvider,
+    texts: &[String],
+) -> Vec<Option<Vec<f32>>> {
+    std::thread::scope(|scope| {
+        scope
+            .spawn(|| {
+                let rt = match tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                {
+                    Ok(rt) => rt,
+                    Err(e) => {
+                        tracing::warn!("memory hygiene: failed to start embedding runtime: {e}");
+                        return vec![None; texts.len()];
+                    }
+                };
+                rt.block_on(async {
+                    let mut out = Vec::with_capacity(texts.len());
+                    let mut consecutive_failures = 0_usize;
+                    for text in texts {
+                        if consecutive_failures >= MAX_CONSECUTIVE_EMBEDDING_FAILURES {
+                            tracing::warn!(
+                                "memory hygiene: embedding provider failed {consecutive_failures} times in a row; skipping remaining {} record(s) this run",
+                                texts.len() - out.len()
+                            );
+                            out.resize(texts.len(), None);
+                            break;
+                        }
+
+                        match embedder.embed_one(text).await {
+                            Ok(emb) => {
+                                consecutive_failures = 0;
+                                out.push(Some(emb));
+                            }
+                            Err(e) => {
+                                consecutive_failures += 1;
+                                tracing::warn!(
+                                    "memory hygiene: embedding backfill failed for a record: {e}"
+                                );
+                                out.push(None);
+                            }
+                        }
+                    }
+                    out
+                })
+            })
+            .join()
+            .unwrap_or_else(|_| vec![None; texts.len()])
+    })
 }
 
 fn should_run_now(workspace_dir: &Path) -> Result<bool> {
@@ -154,7 +293,7 @@ fn record_hygiene_report(workspace_dir: &Path, report: &HygieneReport) -> Result
     let now = Utc::now().to_rfc3339();
     let key = format!("hygiene_{}", now.replace(':', "-"));
     let content = format!(
-        "Memory hygiene completed: archived_memory={} archived_sessions={} purged_memory={} purged_sessions={} pruned_conversation_rows={} pruned_daily_rows={} pruned_system_rows={} pruned_auto_core_rows={}",
+        "Memory hygiene completed: archived_memory={} archived_sessions={} purged_memory={} purged_sessions={} pruned_conversation_rows={} pruned_daily_rows={} pruned_system_rows={} pruned_auto_core_rows={} backfilled_embeddings={}",
         report.archived_memory_files,
         report.archived_session_files,
         report.purged_memory_archives,
@@ -163,6 +302,7 @@ fn record_hygiene_report(workspace_dir: &Path, report: &HygieneReport) -> Result
         report.pruned_daily_rows,
         report.pruned_system_rows,
         report.pruned_auto_core_rows,
+        report.backfilled_embeddings,
     );
     let id = uuid::Uuid::new_v4().to_string();
 
@@ -585,6 +725,7 @@ fn prune_cost_records(workspace_dir: &Path, retention_days: u32) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::memory::embeddings::NoopEmbedding;
     use crate::memory::{Memory, MemoryCategory, SqliteMemory};
     use tempfile::TempDir;
 
@@ -608,7 +749,7 @@ mod tests {
         fs::write(&old_file, "old note").unwrap();
         fs::write(&today_file, "fresh note").unwrap();
 
-        run_if_due(&default_cfg(), workspace).unwrap();
+        run_if_due(&default_cfg(), workspace, &NoopEmbedding).unwrap();
 
         assert!(!old_file.exists(), "old daily file should be archived");
         assert!(
@@ -635,7 +776,7 @@ mod tests {
         let old_file = workspace.join("sessions").join(&old_name);
         fs::write(&old_file, "old session").unwrap();
 
-        run_if_due(&default_cfg(), workspace).unwrap();
+        run_if_due(&default_cfg(), workspace, &NoopEmbedding).unwrap();
 
         assert!(!old_file.exists(), "old session file should be archived");
         assert!(
@@ -660,7 +801,7 @@ mod tests {
         let file_a = workspace.join("memory").join(format!("{old_a}.md"));
         fs::write(&file_a, "first").unwrap();
 
-        run_if_due(&default_cfg(), workspace).unwrap();
+        run_if_due(&default_cfg(), workspace, &NoopEmbedding).unwrap();
         assert!(!file_a.exists(), "first old file should be archived");
 
         let old_b = (Local::now().date_naive() - Duration::days(9))
@@ -670,7 +811,7 @@ mod tests {
         fs::write(&file_b, "second").unwrap();
 
         // Should skip because cadence gate prevents a second immediate run.
-        run_if_due(&default_cfg(), workspace).unwrap();
+        run_if_due(&default_cfg(), workspace, &NoopEmbedding).unwrap();
         assert!(
             file_b.exists(),
             "second file should remain because run is throttled"
@@ -696,7 +837,7 @@ mod tests {
         fs::write(&old_file, "expired").unwrap();
         fs::write(&keep_file, "recent").unwrap();
 
-        run_if_due(&default_cfg(), workspace).unwrap();
+        run_if_due(&default_cfg(), workspace, &NoopEmbedding).unwrap();
 
         assert!(!old_file.exists(), "old archived file should be purged");
         assert!(keep_file.exists(), "recent archived file should remain");
@@ -733,7 +874,7 @@ mod tests {
         cfg.daily_retention_days = 30;
         cfg.system_retention_days = 0;
 
-        run_if_due(&cfg, workspace).unwrap();
+        run_if_due(&cfg, workspace, &NoopEmbedding).unwrap();
 
         let mem2 = SqliteMemory::new(workspace).unwrap();
         assert!(
@@ -776,7 +917,7 @@ mod tests {
         cfg.conversation_retention_days = 0;
         cfg.system_retention_days = 7;
 
-        run_if_due(&cfg, workspace).unwrap();
+        run_if_due(&cfg, workspace, &NoopEmbedding).unwrap();
 
         let mem2 = SqliteMemory::new(workspace).unwrap();
         assert!(
@@ -818,7 +959,7 @@ mod tests {
         cfg.purge_after_days = 0;
         cfg.conversation_retention_days = 30;
 
-        run_if_due(&cfg, workspace).unwrap();
+        run_if_due(&cfg, workspace, &NoopEmbedding).unwrap();
 
         let mem2 = SqliteMemory::new(workspace).unwrap();
         assert!(
@@ -914,7 +1055,7 @@ mod tests {
         cfg.system_retention_days = 0;
         cfg.core_auto_retention_days = 0;
 
-        run_if_due(&cfg, workspace).unwrap();
+        run_if_due(&cfg, workspace, &NoopEmbedding).unwrap();
 
         let mem2 = SqliteMemory::new(workspace).unwrap();
         let system_entries = mem2
@@ -1001,7 +1142,7 @@ mod tests {
         cfg.system_retention_days = 0;
         cfg.core_auto_retention_days = 90;
 
-        run_if_due(&cfg, workspace).unwrap();
+        run_if_due(&cfg, workspace, &NoopEmbedding).unwrap();
 
         let mem2 = SqliteMemory::new(workspace).unwrap();
         assert!(
@@ -1027,6 +1168,180 @@ mod tests {
         assert_eq!(
             result, 0,
             "retention_days=0 should skip pruning and return 0"
+        );
+    }
+
+    /// Deterministic embedder for tests — avoids real network calls.
+    struct FixedEmbedding;
+
+    #[async_trait::async_trait]
+    impl EmbeddingProvider for FixedEmbedding {
+        fn name(&self) -> &str {
+            "fixed"
+        }
+
+        fn dimensions(&self) -> usize {
+            4
+        }
+
+        async fn embed(&self, texts: &[&str]) -> anyhow::Result<Vec<Vec<f32>>> {
+            Ok(texts.iter().map(|_| vec![0.1, 0.2, 0.3, 0.4]).collect())
+        }
+    }
+
+    fn read_embedding(db_path: &Path, key: &str) -> Option<Vec<u8>> {
+        let conn = Connection::open(db_path).unwrap();
+        conn.query_row(
+            "SELECT embedding FROM memories WHERE key = ?1",
+            params![key],
+            |row| row.get(0),
+        )
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn backfills_missing_embeddings_when_model_configured() {
+        let tmp = TempDir::new().unwrap();
+        let workspace = tmp.path();
+
+        // Stored via the Noop embedder, so this row starts with no vector.
+        let mem = SqliteMemory::new(workspace).unwrap();
+        mem.store(
+            "needs_embedding",
+            "some durable fact",
+            MemoryCategory::Core,
+            None,
+        )
+        .await
+        .unwrap();
+        drop(mem);
+
+        let db_path = workspace.join("memory").join("brain.db");
+        assert!(
+            read_embedding(&db_path, "needs_embedding").is_none(),
+            "embedding should start unset"
+        );
+
+        let mut cfg = default_cfg();
+        cfg.archive_after_days = 0;
+        cfg.purge_after_days = 0;
+        cfg.conversation_retention_days = 0;
+        cfg.daily_retention_days = 0;
+        cfg.system_retention_days = 0;
+        cfg.core_auto_retention_days = 0;
+
+        run_if_due(&cfg, workspace, &FixedEmbedding).unwrap();
+
+        assert!(
+            read_embedding(&db_path, "needs_embedding").is_some(),
+            "hygiene should backfill the missing embedding vector"
+        );
+
+        let mem2 = SqliteMemory::new(workspace).unwrap();
+        let system_entries = mem2
+            .list(Some(&MemoryCategory::System), None)
+            .await
+            .unwrap();
+        assert!(
+            system_entries
+                .iter()
+                .any(|e| e.content.contains("backfilled_embeddings=1")),
+            "hygiene report should log the backfilled embedding count"
+        );
+    }
+
+    #[test]
+    fn backfill_skipped_when_no_embedding_model_configured() {
+        let tmp = TempDir::new().unwrap();
+        let workspace = tmp.path();
+        let result = backfill_missing_embeddings(workspace, &NoopEmbedding).unwrap();
+        assert_eq!(
+            result, 0,
+            "no embedding model configured should skip backfill and return 0"
+        );
+    }
+
+    /// Always-failing embedder that counts calls — simulates a down/flaky API.
+    struct FailingEmbedding {
+        calls: std::sync::atomic::AtomicUsize,
+    }
+
+    #[async_trait::async_trait]
+    impl EmbeddingProvider for FailingEmbedding {
+        fn name(&self) -> &str {
+            "failing"
+        }
+
+        fn dimensions(&self) -> usize {
+            4
+        }
+
+        async fn embed(&self, texts: &[&str]) -> anyhow::Result<Vec<Vec<f32>>> {
+            self.calls
+                .fetch_add(texts.len(), std::sync::atomic::Ordering::SeqCst);
+            anyhow::bail!("simulated embedding provider outage")
+        }
+    }
+
+    #[tokio::test]
+    async fn embedding_backfill_stops_after_consecutive_failures() {
+        let tmp = TempDir::new().unwrap();
+        let workspace = tmp.path();
+
+        let mem = SqliteMemory::new(workspace).unwrap();
+        for i in 0..10 {
+            mem.store(
+                &format!("needs_embedding_{i}"),
+                "some fact",
+                MemoryCategory::Core,
+                None,
+            )
+            .await
+            .unwrap();
+        }
+        drop(mem);
+
+        let embedder = FailingEmbedding {
+            calls: std::sync::atomic::AtomicUsize::new(0),
+        };
+
+        let backfilled = backfill_missing_embeddings(workspace, &embedder).unwrap();
+        assert_eq!(
+            backfilled, 0,
+            "no embeddings should succeed against a failing provider"
+        );
+        assert_eq!(
+            embedder.calls.load(std::sync::atomic::Ordering::SeqCst),
+            MAX_CONSECUTIVE_EMBEDDING_FAILURES,
+            "circuit breaker should stop calling the provider after consecutive failures \
+             instead of burning a timeout on every remaining row"
+        );
+    }
+
+    #[tokio::test]
+    async fn embedding_backfill_caps_rows_processed_per_run() {
+        let tmp = TempDir::new().unwrap();
+        let workspace = tmp.path();
+
+        let mem = SqliteMemory::new(workspace).unwrap();
+        let total = MAX_EMBEDDING_BACKFILL_PER_RUN + 5;
+        for i in 0..total {
+            mem.store(
+                &format!("bulk_{i}"),
+                "some fact",
+                MemoryCategory::Core,
+                None,
+            )
+            .await
+            .unwrap();
+        }
+        drop(mem);
+
+        let backfilled = backfill_missing_embeddings(workspace, &FixedEmbedding).unwrap();
+        assert_eq!(
+            backfilled as usize, MAX_EMBEDDING_BACKFILL_PER_RUN,
+            "a single hygiene run should cap embedding backfill work, leaving the \
+             remainder for a later run"
         );
     }
 }

@@ -206,7 +206,15 @@ pub fn create_memory_with_storage_and_routes(
     let resolved_embedding = resolve_embedding_config(config, embedding_routes, api_key);
 
     // Best-effort memory hygiene/retention pass (throttled by state file).
-    if let Err(e) = hygiene::run_if_due(config, workspace_dir) {
+    // Reuses the resolved embedding config so hygiene can backfill any memory
+    // rows that are missing an embedding vector when a model is configured.
+    let hygiene_embedder = embeddings::create_embedding_provider(
+        &resolved_embedding.provider,
+        resolved_embedding.api_key.as_deref(),
+        &resolved_embedding.model,
+        resolved_embedding.dimensions,
+    );
+    if let Err(e) = hygiene::run_if_due(config, workspace_dir, hygiene_embedder.as_ref()) {
         tracing::warn!("memory hygiene skipped: {e}");
     }
 
