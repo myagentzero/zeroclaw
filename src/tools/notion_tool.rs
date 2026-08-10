@@ -11,8 +11,8 @@ const NOTION_REQUEST_TIMEOUT_SECS: u64 = 30;
 const MAX_ERROR_BODY_CHARS: usize = 500;
 
 /// Tool for interacting with the Notion API — query databases, read/create/update pages,
-/// and search the workspace. Each action is gated by the appropriate security operation
-/// (Read for queries, Act for mutations).
+/// read/append block children (page bodies), and search the workspace. Each action is gated
+/// by the appropriate security operation (Read for queries, Act for mutations).
 pub struct NotionTool {
     api_key: String,
     http: reqwest::Client,
@@ -163,6 +163,69 @@ impl NotionTool {
         }
         resp.json().await.map_err(Into::into)
     }
+
+    /// Read first-level child blocks for a page or block (page body content).
+    ///
+    /// A page ID is a valid `block_id` for reading that page's body. Nested children
+    /// require follow-up calls when a returned block has `has_children: true`.
+    async fn read_block_children(
+        &self,
+        block_id: &str,
+        start_cursor: Option<&str>,
+        page_size: Option<u32>,
+    ) -> anyhow::Result<serde_json::Value> {
+        let url = format!("{NOTION_API_BASE}/blocks/{block_id}/children");
+        let mut req = self.http.get(&url).headers(self.headers()?);
+        if let Some(cursor) = start_cursor {
+            req = req.query(&[("start_cursor", cursor)]);
+        }
+        if let Some(size) = page_size {
+            req = req.query(&[("page_size", size.to_string())]);
+        }
+        let resp = req
+            .timeout(std::time::Duration::from_secs(NOTION_REQUEST_TIMEOUT_SECS))
+            .send()
+            .await?;
+        let status = resp.status();
+        if !status.is_success() {
+            let text = resp.text().await.unwrap_or_default();
+            let truncated = crate::util::truncate_with_ellipsis(&text, MAX_ERROR_BODY_CHARS);
+            anyhow::bail!("Notion read_block_children failed ({status}): {truncated}");
+        }
+        resp.json().await.map_err(Into::into)
+    }
+
+    /// Append child blocks to a page or block body.
+    ///
+    /// A page ID is a valid `block_id` for writing that page's body. Optionally insert
+    /// after a specific sibling via `after`.
+    async fn append_blocks(
+        &self,
+        block_id: &str,
+        children: &serde_json::Value,
+        after: Option<&str>,
+    ) -> anyhow::Result<serde_json::Value> {
+        let url = format!("{NOTION_API_BASE}/blocks/{block_id}/children");
+        let mut body = json!({ "children": children });
+        if let Some(after_id) = after {
+            body["after"] = json!(after_id);
+        }
+        let resp = self
+            .http
+            .patch(&url)
+            .headers(self.headers()?)
+            .json(&body)
+            .timeout(std::time::Duration::from_secs(NOTION_REQUEST_TIMEOUT_SECS))
+            .send()
+            .await?;
+        let status = resp.status();
+        if !status.is_success() {
+            let text = resp.text().await.unwrap_or_default();
+            let truncated = crate::util::truncate_with_ellipsis(&text, MAX_ERROR_BODY_CHARS);
+            anyhow::bail!("Notion append_blocks failed ({status}): {truncated}");
+        }
+        resp.json().await.map_err(Into::into)
+    }
 }
 
 #[async_trait]
@@ -176,7 +239,7 @@ impl Tool for NotionTool {
     }
 
     fn description(&self) -> &str {
-        "Notion: query databases, read/create/update pages, search."
+        "Notion: query databases, read/create/update pages, read/append block children (page bodies), search."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
@@ -185,7 +248,15 @@ impl Tool for NotionTool {
             "properties": {
                 "action": {
                     "type": "string",
-                    "enum": ["query_database", "read_page", "create_page", "update_page", "search"],
+                    "enum": [
+                        "query_database",
+                        "read_page",
+                        "create_page",
+                        "update_page",
+                        "read_block_children",
+                        "append_blocks",
+                        "search"
+                    ],
                     "description": "The Notion API action to perform"
                 },
                 "database_id": {
@@ -196,6 +267,10 @@ impl Tool for NotionTool {
                     "type": "string",
                     "description": "Page ID (required for read_page and update_page)"
                 },
+                "block_id": {
+                    "type": "string",
+                    "description": "Block or page ID (required for read_block_children and append_blocks). Use a page ID to read/write that page's body."
+                },
                 "filter": {
                     "type": "object",
                     "description": "Notion filter object for query_database"
@@ -203,6 +278,22 @@ impl Tool for NotionTool {
                 "properties": {
                     "type": "object",
                     "description": "Properties object for create_page and update_page"
+                },
+                "children": {
+                    "type": "array",
+                    "description": "Array of Notion block objects for append_blocks"
+                },
+                "after": {
+                    "type": "string",
+                    "description": "Optional sibling block ID; append_blocks inserts after this block"
+                },
+                "start_cursor": {
+                    "type": "string",
+                    "description": "Pagination cursor for read_block_children"
+                },
+                "page_size": {
+                    "type": "integer",
+                    "description": "Page size for read_block_children (max 100)"
                 },
                 "query": {
                     "type": "string",
@@ -227,14 +318,16 @@ impl Tool for NotionTool {
 
         // Enforce granular security: Read for queries, Act for mutations
         let operation = match action {
-            "query_database" | "read_page" | "search" => ToolOperation::Read,
-            "create_page" | "update_page" => ToolOperation::Act,
+            "query_database" | "read_page" | "read_block_children" | "search" => {
+                ToolOperation::Read
+            }
+            "create_page" | "update_page" | "append_blocks" => ToolOperation::Act,
             _ => {
                 return Ok(ToolResult {
                     success: false,
                     output: String::new(),
                     error: Some(format!(
-                        "Unknown action: {action}. Valid actions: query_database, read_page, create_page, update_page, search"
+                        "Unknown action: {action}. Valid actions: query_database, read_page, create_page, update_page, read_block_children, append_blocks, search"
                     )),
                 });
             }
@@ -313,6 +406,60 @@ impl Tool for NotionTool {
                 };
                 self.update_page(page_id, properties).await
             }
+            "read_block_children" => {
+                let block_id = match args.get("block_id").and_then(|v| v.as_str()) {
+                    Some(id) => id,
+                    None => {
+                        return Ok(ToolResult {
+                            success: false,
+                            output: String::new(),
+                            error: Some(
+                                "read_block_children requires block_id parameter (page ID works for page bodies)".into(),
+                            ),
+                        });
+                    }
+                };
+                let start_cursor = args.get("start_cursor").and_then(|v| v.as_str());
+                let page_size = args
+                    .get("page_size")
+                    .and_then(|v| v.as_u64())
+                    .map(|n| n as u32);
+                self.read_block_children(block_id, start_cursor, page_size)
+                    .await
+            }
+            "append_blocks" => {
+                let block_id = match args.get("block_id").and_then(|v| v.as_str()) {
+                    Some(id) => id,
+                    None => {
+                        return Ok(ToolResult {
+                            success: false,
+                            output: String::new(),
+                            error: Some(
+                                "append_blocks requires block_id parameter (page ID works for page bodies)".into(),
+                            ),
+                        });
+                    }
+                };
+                let children = match args.get("children") {
+                    Some(c) if c.is_array() => c,
+                    Some(_) => {
+                        return Ok(ToolResult {
+                            success: false,
+                            output: String::new(),
+                            error: Some("append_blocks requires children to be an array".into()),
+                        });
+                    }
+                    None => {
+                        return Ok(ToolResult {
+                            success: false,
+                            output: String::new(),
+                            error: Some("append_blocks requires children parameter".into()),
+                        });
+                    }
+                };
+                let after = args.get("after").and_then(|v| v.as_str());
+                self.append_blocks(block_id, children, after).await
+            }
             "search" => {
                 let query = args.get("query").and_then(|v| v.as_str()).unwrap_or("");
                 self.search(query).await
@@ -369,6 +516,8 @@ mod tests {
         assert!(action_strs.contains(&"read_page"));
         assert!(action_strs.contains(&"create_page"));
         assert!(action_strs.contains(&"update_page"));
+        assert!(action_strs.contains(&"read_block_children"));
+        assert!(action_strs.contains(&"append_blocks"));
         assert!(action_strs.contains(&"search"));
     }
 
@@ -438,5 +587,56 @@ mod tests {
             .unwrap();
         assert!(!result.success);
         assert!(result.error.as_deref().unwrap().contains("properties"));
+    }
+
+    #[tokio::test]
+    async fn execute_read_block_children_missing_block_id_returns_error() {
+        let tool = test_tool();
+        let result = tool
+            .execute(json!({"action": "read_block_children"}))
+            .await
+            .unwrap();
+        assert!(!result.success);
+        assert!(result.error.as_deref().unwrap().contains("block_id"));
+    }
+
+    #[tokio::test]
+    async fn execute_append_blocks_missing_block_id_returns_error() {
+        let tool = test_tool();
+        let result = tool
+            .execute(json!({
+                "action": "append_blocks",
+                "children": [{"type": "paragraph", "paragraph": {"rich_text": []}}]
+            }))
+            .await
+            .unwrap();
+        assert!(!result.success);
+        assert!(result.error.as_deref().unwrap().contains("block_id"));
+    }
+
+    #[tokio::test]
+    async fn execute_append_blocks_missing_children_returns_error() {
+        let tool = test_tool();
+        let result = tool
+            .execute(json!({"action": "append_blocks", "block_id": "test-id"}))
+            .await
+            .unwrap();
+        assert!(!result.success);
+        assert!(result.error.as_deref().unwrap().contains("children"));
+    }
+
+    #[tokio::test]
+    async fn execute_append_blocks_children_must_be_array() {
+        let tool = test_tool();
+        let result = tool
+            .execute(json!({
+                "action": "append_blocks",
+                "block_id": "test-id",
+                "children": {"type": "paragraph"}
+            }))
+            .await
+            .unwrap();
+        assert!(!result.success);
+        assert!(result.error.as_deref().unwrap().contains("array"));
     }
 }
