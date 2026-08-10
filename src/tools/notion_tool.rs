@@ -3,16 +3,33 @@ use crate::security::{SecurityPolicy, policy::ToolOperation};
 use async_trait::async_trait;
 use serde_json::json;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 const NOTION_API_BASE: &str = "https://api.notion.com/v1";
 const NOTION_VERSION: &str = "2022-06-28";
 const NOTION_REQUEST_TIMEOUT_SECS: u64 = 30;
 /// Maximum number of characters to include from an error response body.
 const MAX_ERROR_BODY_CHARS: usize = 500;
+/// Maximum recursion depth when flattening block children into text. Guards
+/// against pathologically deep block trees; if exceeded, traversal stops and
+/// reports `truncated: true` rather than silently omitting content.
+const MAX_TEXT_TRAVERSAL_DEPTH: usize = 12;
+/// Maximum total blocks visited when flattening block children into text.
+/// Guards against unbounded traversal cost on very large pages; if exceeded,
+/// traversal stops and reports `truncated: true` rather than silently
+/// omitting content.
+const MAX_TEXT_TRAVERSAL_BLOCKS: usize = 3000;
+
+/// Result of flattening a block subtree into plain text.
+struct BlockTextResult {
+    text: String,
+    truncated: bool,
+}
 
 /// Tool for interacting with the Notion API — query databases, read/create/update pages,
-/// read/append block children (page bodies), and search the workspace. Each action is gated
-/// by the appropriate security operation (Read for queries, Act for mutations).
+/// read (raw or flattened plain text)/append block children (page bodies), and search the
+/// workspace. Each action is gated by the appropriate security operation (Read for queries,
+/// Act for mutations).
 pub struct NotionTool {
     api_key: String,
     http: reqwest::Client,
@@ -226,6 +243,286 @@ impl NotionTool {
         }
         resp.json().await.map_err(Into::into)
     }
+
+    /// Recursively flatten a block's children into plain text, depth-first, so
+    /// meeting-note-style page bodies can be read without walking the raw block
+    /// tree by hand. Every visited block either contributes a formatted line or
+    /// (for pure layout containers) is transparently recursed into, so content
+    /// isn't silently dropped — recognized block types are rendered with
+    /// type-appropriate formatting, and any other type falls back to rendering
+    /// its `rich_text` (if present) or a `[type]` placeholder, so unfamiliar or
+    /// future block types still surface *something* rather than vanishing.
+    ///
+    /// Traversal is bounded by `MAX_TEXT_TRAVERSAL_DEPTH` and
+    /// `MAX_TEXT_TRAVERSAL_BLOCKS` (tracked via `remaining_budget`). Hitting
+    /// either bound stops traversal and sets `truncated: true` so callers are
+    /// told explicitly instead of receiving quietly incomplete text.
+    fn collect_block_text<'a>(
+        &'a self,
+        block_id: String,
+        depth: usize,
+        remaining_budget: &'a AtomicUsize,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = anyhow::Result<BlockTextResult>> + Send + 'a>,
+    > {
+        Box::pin(async move {
+            let mut text = String::new();
+            let mut truncated = false;
+            let mut cursor: Option<String> = None;
+            let mut numbered_ordinal: usize = 0;
+
+            loop {
+                if remaining_budget.load(Ordering::Relaxed) == 0 {
+                    truncated = true;
+                    break;
+                }
+
+                let page = self
+                    .read_block_children(&block_id, cursor.as_deref(), Some(100))
+                    .await?;
+                let results: Vec<serde_json::Value> = page
+                    .get("results")
+                    .and_then(|v| v.as_array())
+                    .cloned()
+                    .unwrap_or_default();
+
+                for block in &results {
+                    if remaining_budget.load(Ordering::Relaxed) == 0 {
+                        truncated = true;
+                        break;
+                    }
+                    remaining_budget.fetch_sub(1, Ordering::Relaxed);
+
+                    let block_type = block
+                        .get("type")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("unknown");
+                    numbered_ordinal = if block_type == "numbered_list_item" {
+                        numbered_ordinal + 1
+                    } else {
+                        0
+                    };
+
+                    if let Some(line) = render_block_line(block, depth, numbered_ordinal) {
+                        text.push_str(&line);
+                        text.push('\n');
+                    }
+
+                    // Synced blocks that reference another block report their own (empty)
+                    // children in the API; the real content lives under `synced_from`.
+                    let recurse_id = if block_type == "synced_block" {
+                        block
+                            .get("synced_block")
+                            .and_then(|o| o.get("synced_from"))
+                            .and_then(|sf| sf.get("block_id"))
+                            .and_then(|v| v.as_str())
+                            .map(String::from)
+                    } else {
+                        None
+                    };
+                    let has_children = block
+                        .get("has_children")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false);
+
+                    if has_children || recurse_id.is_some() {
+                        let target_id = recurse_id.unwrap_or_else(|| {
+                            block
+                                .get("id")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or_default()
+                                .to_string()
+                        });
+                        if target_id.is_empty() {
+                            continue;
+                        }
+                        if depth + 1 > MAX_TEXT_TRAVERSAL_DEPTH {
+                            text.push_str(&"  ".repeat(depth + 1));
+                            text.push_str("[+ nested content not expanded: max depth reached]\n");
+                            truncated = true;
+                            continue;
+                        }
+                        let child = self
+                            .collect_block_text(target_id, depth + 1, remaining_budget)
+                            .await?;
+                        text.push_str(&child.text);
+                        truncated = truncated || child.truncated;
+                    }
+                }
+
+                if truncated {
+                    break;
+                }
+
+                let has_more = page
+                    .get("has_more")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                if !has_more {
+                    break;
+                }
+                cursor = page
+                    .get("next_cursor")
+                    .and_then(|v| v.as_str())
+                    .map(String::from);
+                if cursor.is_none() {
+                    break;
+                }
+            }
+
+            Ok(BlockTextResult { text, truncated })
+        })
+    }
+}
+
+/// Concatenate the `plain_text` (falling back to `text.content`) of every rich
+/// text run in a Notion rich-text array.
+fn extract_rich_text(rich_text: &serde_json::Value) -> String {
+    rich_text
+        .as_array()
+        .map(|items| {
+            items
+                .iter()
+                .map(|item| {
+                    item.get("plain_text")
+                        .and_then(|v| v.as_str())
+                        .or_else(|| {
+                            item.get("text")
+                                .and_then(|t| t.get("content"))
+                                .and_then(|v| v.as_str())
+                        })
+                        .unwrap_or("")
+                })
+                .collect::<String>()
+        })
+        .unwrap_or_default()
+}
+
+/// Render a single Notion block as one formatted, indented line of plain
+/// text. Returns `None` only for pure layout containers (`column_list`,
+/// `column`, `synced_block`, `table`) whose actual content lives entirely in
+/// their children, which the caller recurses into separately.
+fn render_block_line(
+    block: &serde_json::Value,
+    depth: usize,
+    numbered_ordinal: usize,
+) -> Option<String> {
+    let block_type = block
+        .get("type")
+        .and_then(|v| v.as_str())
+        .unwrap_or("unknown");
+    let type_obj = block.get(block_type);
+    let pad = "  ".repeat(depth);
+    let rich = |field: &str| -> String {
+        type_obj
+            .and_then(|o| o.get(field))
+            .map(extract_rich_text)
+            .unwrap_or_default()
+    };
+
+    match block_type {
+        "paragraph" => Some(format!("{pad}{}", rich("rich_text"))),
+        "heading_1" => Some(format!("{pad}# {}", rich("rich_text"))),
+        "heading_2" => Some(format!("{pad}## {}", rich("rich_text"))),
+        "heading_3" => Some(format!("{pad}### {}", rich("rich_text"))),
+        "bulleted_list_item" => Some(format!("{pad}- {}", rich("rich_text"))),
+        "numbered_list_item" => Some(format!("{pad}{numbered_ordinal}. {}", rich("rich_text"))),
+        "to_do" => {
+            let checked = type_obj
+                .and_then(|o| o.get("checked"))
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            let marker = if checked { "[x]" } else { "[ ]" };
+            Some(format!("{pad}{marker} {}", rich("rich_text")))
+        }
+        "quote" => Some(format!("{pad}> {}", rich("rich_text"))),
+        "callout" => Some(format!("{pad}> {}", rich("rich_text"))),
+        "toggle" => Some(format!("{pad}\u{25b8} {}", rich("rich_text"))),
+        "code" => {
+            let lang = type_obj
+                .and_then(|o| o.get("language"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            Some(format!(
+                "{pad}```{lang}\n{pad}{}\n{pad}```",
+                rich("rich_text")
+            ))
+        }
+        "equation" => {
+            let expr = type_obj
+                .and_then(|o| o.get("expression"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            Some(format!("{pad}[equation] {expr}"))
+        }
+        "divider" => Some(format!("{pad}---")),
+        "table_row" => {
+            let cells = type_obj
+                .and_then(|o| o.get("cells"))
+                .and_then(|v| v.as_array());
+            let rendered = cells
+                .map(|c| {
+                    c.iter()
+                        .map(extract_rich_text)
+                        .collect::<Vec<_>>()
+                        .join(" | ")
+                })
+                .unwrap_or_default();
+            Some(format!("{pad}| {rendered} |"))
+        }
+        "child_page" => {
+            let title = type_obj
+                .and_then(|o| o.get("title"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("untitled");
+            Some(format!("{pad}[child page: {title}]"))
+        }
+        "child_database" => {
+            let title = type_obj
+                .and_then(|o| o.get("title"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("untitled");
+            Some(format!("{pad}[child database: {title}]"))
+        }
+        "image" | "video" | "file" | "pdf" => {
+            let caption = rich("caption");
+            let url = type_obj
+                .and_then(|o| o.get("external").or_else(|| o.get("file")))
+                .and_then(|f| f.get("url"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let caption_suffix = if caption.is_empty() {
+                String::new()
+            } else {
+                format!(" {caption}")
+            };
+            let url_suffix = if url.is_empty() {
+                String::new()
+            } else {
+                format!(" ({url})")
+            };
+            Some(format!("{pad}[{block_type}]{caption_suffix}{url_suffix}"))
+        }
+        "bookmark" | "embed" | "link_preview" => {
+            let url = type_obj
+                .and_then(|o| o.get("url"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            Some(format!("{pad}[{block_type}] {url}"))
+        }
+        "breadcrumb" | "table_of_contents" => Some(format!("{pad}[{block_type}]")),
+        "column_list" | "column" | "synced_block" | "table" => None,
+        _ => {
+            // Unknown/future block type: surface its rich_text if present so
+            // content isn't silently dropped, else a bare placeholder.
+            let text = rich("rich_text");
+            if text.is_empty() {
+                Some(format!("{pad}[{block_type}]"))
+            } else {
+                Some(format!("{pad}[{block_type}] {text}"))
+            }
+        }
+    }
 }
 
 #[async_trait]
@@ -239,7 +536,7 @@ impl Tool for NotionTool {
     }
 
     fn description(&self) -> &str {
-        "Notion: query databases, read/create/update pages, read/append block children (page bodies), search."
+        "Notion: query databases, read/create/update pages, read (raw or flattened text)/append block children (page bodies), search."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
@@ -270,6 +567,11 @@ impl Tool for NotionTool {
                 "block_id": {
                     "type": "string",
                     "description": "Block or page ID (required for read_block_children and append_blocks). Use a page ID to read/write that page's body."
+                },
+                "format": {
+                    "type": "string",
+                    "enum": ["raw", "text"],
+                    "description": "For read_block_children: 'text' (default) recursively flattens the entire subtree into plain text (with a truncated flag if a safety limit is hit), more token-efficient than raw JSON; 'raw' returns one page of raw Notion block JSON."
                 },
                 "filter": {
                     "type": "object",
@@ -419,13 +721,43 @@ impl Tool for NotionTool {
                         });
                     }
                 };
-                let start_cursor = args.get("start_cursor").and_then(|v| v.as_str());
-                let page_size = args
-                    .get("page_size")
-                    .and_then(|v| v.as_u64())
-                    .map(|n| n as u32);
-                self.read_block_children(block_id, start_cursor, page_size)
-                    .await
+                let format = args
+                    .get("format")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("text");
+                match format {
+                    "raw" => {
+                        let start_cursor = args.get("start_cursor").and_then(|v| v.as_str());
+                        let page_size = args
+                            .get("page_size")
+                            .and_then(|v| v.as_u64())
+                            .map(|n| n as u32);
+                        self.read_block_children(block_id, start_cursor, page_size)
+                            .await
+                    }
+                    "text" => {
+                        let budget = AtomicUsize::new(MAX_TEXT_TRAVERSAL_BLOCKS);
+                        self.collect_block_text(block_id.to_string(), 0, &budget)
+                            .await
+                            .map(|result| {
+                                json!({
+                                    "text": result.text,
+                                    "truncated": result.truncated,
+                                    "block_count": MAX_TEXT_TRAVERSAL_BLOCKS
+                                        - budget.load(Ordering::Relaxed),
+                                })
+                            })
+                    }
+                    other => {
+                        return Ok(ToolResult {
+                            success: false,
+                            output: String::new(),
+                            error: Some(format!(
+                                "Invalid format '{other}' for read_block_children. Valid formats: raw, text"
+                            )),
+                        });
+                    }
+                }
             }
             "append_blocks" => {
                 let block_id = match args.get("block_id").and_then(|v| v.as_str()) {
@@ -638,5 +970,126 @@ mod tests {
             .unwrap();
         assert!(!result.success);
         assert!(result.error.as_deref().unwrap().contains("array"));
+    }
+
+    #[tokio::test]
+    async fn execute_read_block_children_invalid_format_returns_error() {
+        let tool = test_tool();
+        let result = tool
+            .execute(json!({
+                "action": "read_block_children",
+                "block_id": "test-id",
+                "format": "yaml"
+            }))
+            .await
+            .unwrap();
+        assert!(!result.success);
+        assert!(result.error.as_deref().unwrap().contains("Invalid format"));
+    }
+
+    #[test]
+    fn extract_rich_text_joins_plain_text_runs() {
+        let rich_text = json!([
+            {"plain_text": "Hello, "},
+            {"plain_text": "world!"}
+        ]);
+        assert_eq!(extract_rich_text(&rich_text), "Hello, world!");
+    }
+
+    #[test]
+    fn extract_rich_text_falls_back_to_text_content() {
+        let rich_text = json!([{"type": "text", "text": {"content": "fallback"}}]);
+        assert_eq!(extract_rich_text(&rich_text), "fallback");
+    }
+
+    #[test]
+    fn extract_rich_text_handles_empty_array() {
+        assert_eq!(extract_rich_text(&json!([])), "");
+    }
+
+    #[test]
+    fn render_block_line_paragraph() {
+        let block = json!({
+            "type": "paragraph",
+            "paragraph": {"rich_text": [{"plain_text": "Discuss roadmap"}]}
+        });
+        assert_eq!(
+            render_block_line(&block, 0, 0),
+            Some("Discuss roadmap".to_string())
+        );
+    }
+
+    #[test]
+    fn render_block_line_heading_and_indentation() {
+        let block = json!({
+            "type": "heading_2",
+            "heading_2": {"rich_text": [{"plain_text": "Action Items"}]}
+        });
+        assert_eq!(
+            render_block_line(&block, 1, 0),
+            Some("  ## Action Items".to_string())
+        );
+    }
+
+    #[test]
+    fn render_block_line_numbered_list_uses_ordinal() {
+        let block = json!({
+            "type": "numbered_list_item",
+            "numbered_list_item": {"rich_text": [{"plain_text": "First step"}]}
+        });
+        assert_eq!(
+            render_block_line(&block, 0, 3),
+            Some("3. First step".to_string())
+        );
+    }
+
+    #[test]
+    fn render_block_line_to_do_reflects_checked_state() {
+        let checked = json!({
+            "type": "to_do",
+            "to_do": {"rich_text": [{"plain_text": "Send notes"}], "checked": true}
+        });
+        assert_eq!(
+            render_block_line(&checked, 0, 0),
+            Some("[x] Send notes".to_string())
+        );
+
+        let unchecked = json!({
+            "type": "to_do",
+            "to_do": {"rich_text": [{"plain_text": "Send notes"}], "checked": false}
+        });
+        assert_eq!(
+            render_block_line(&unchecked, 0, 0),
+            Some("[ ] Send notes".to_string())
+        );
+    }
+
+    #[test]
+    fn render_block_line_layout_containers_return_none() {
+        for ty in ["column_list", "column", "synced_block", "table"] {
+            let block = json!({"type": ty});
+            assert_eq!(render_block_line(&block, 0, 0), None, "type: {ty}");
+        }
+    }
+
+    #[test]
+    fn render_block_line_unknown_type_with_rich_text_is_not_lost() {
+        let block = json!({
+            "type": "some_future_block_type",
+            "some_future_block_type": {"rich_text": [{"plain_text": "future content"}]}
+        });
+        assert_eq!(
+            render_block_line(&block, 0, 0),
+            Some("[some_future_block_type] future content".to_string())
+        );
+    }
+
+    #[test]
+    fn render_block_line_unknown_type_without_rich_text_gets_placeholder() {
+        let block = json!({"type": "some_unhandled_type"});
+        assert_eq!(
+            render_block_line(&block, 0, 0),
+            Some("[some_unhandled_type]".to_string())
+        );
     }
 }
