@@ -58,7 +58,6 @@ pub mod memory_store;
 pub mod notion_tool;
 pub mod orchestration_settings;
 pub mod pipeline;
-pub mod provider_status;
 pub mod reaction;
 pub mod read_skill;
 pub mod schema;
@@ -117,7 +116,6 @@ pub use memory_forget::MemoryForgetTool;
 pub use memory_recall::MemoryRecallTool;
 pub use memory_store::MemoryStoreTool;
 pub use notion_tool::NotionTool;
-pub use provider_status::ProviderStatusTool;
 pub use reaction::ReactionTool;
 pub use read_skill::ReadSkillTool;
 #[allow(unused_imports)]
@@ -402,15 +400,6 @@ pub fn all_tools_with_runtime(
     // Local context tool — date, time, timezone, location.
     if root_config.local_context.enabled {
         tool_arcs.push(Arc::new(LocalContextTool::new(&root_config.local_context)));
-    }
-
-    // LiteLLM proxy status tool — only when using a custom provider
-    if root_config
-        .default_provider
-        .as_deref()
-        .map_or(false, |p| p.starts_with("custom:"))
-    {
-        tool_arcs.push(Arc::new(ProviderStatusTool::new(config.clone())));
     }
 
     if has_shell_access {

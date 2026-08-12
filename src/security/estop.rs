@@ -317,7 +317,6 @@ const NETWORK_TOOL_NAMES: &[&str] = &[
     "ess_query",
     "delegate",
     "subagent_spawn",
-    "provider_status",
 ];
 
 fn is_network_tool(normalized_name: &str) -> bool {

@@ -107,7 +107,7 @@ Tool categories:
 - **Task Orchestration**: `task_create`, `task_update`, `task_get`, `task_list`, `task_registry` (SQLite-backed dependency-tracked task graph, persisted at `<workspace_dir>/tasks/tasks.db`); viewable/deletable from the web dashboard's Tasks page (`GET /api/tasks`, `DELETE /api/tasks/{id}`)
 - **Hardware**: `hardware_board_info`, `hardware_memory_map`, `hardware_memory_read`
 - **Integrations**: `github_tool`, `jira_tool`, `confluence_tool`, `notion_tool`, `servicenow_tool`
-- **Utilities**: `git_operations`, `schema`, `calculator`, `weather_tool`, `ess_query`, `provider_status`, `read_skill`
+- **Utilities**: `git_operations`, `schema`, `calculator`, `weather_tool`, `ess_query`, `read_skill`
 - **System**: `bg_run`, `agent_selection`, `agent_load_tracker`, `orchestration_settings`
 - **MCP**: `mcp_tool`, `mcp_client`, `mcp_protocol`, `mcp_transport`
 - **Other**: `composio` (OAuth), `pipeline`, `reaction`
