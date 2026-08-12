@@ -6265,6 +6265,153 @@ fn validate_mcp_config(config: &McpConfig) -> Result<()> {
 }
 
 impl Config {
+    /// Decrypt every secret-bearing field in place, using the `SecretStore`
+    /// derived from `self.config_path`'s parent directory and `self.secrets.encrypt`.
+    ///
+    /// This is the single source of truth for "which fields are secrets" on
+    /// load. Both the full startup load (`load_or_init`) and the channel
+    /// runtime hot-reload path (`load_runtime_defaults_from_config_file` in
+    /// `src/channels/mod.rs`) must call this so a config change made while
+    /// the daemon is running (e.g. via `/fallback-enabled`, `/effort`,
+    /// `/reset-pairing`) doesn't feed still-encrypted ciphertext to a
+    /// provider/tool as if it were the real credential.
+    pub(crate) fn decrypt_secrets(&mut self) -> Result<()> {
+        let agentzero_dir = self
+            .config_path
+            .parent()
+            .context("config_path must have a parent directory")?;
+        let store = crate::security::SecretStore::new(agentzero_dir, self.secrets.encrypt);
+
+        decrypt_optional_secret(&store, &mut self.api_key, "config.api_key")?;
+        for (profile_name, profile) in self.model_providers.iter_mut() {
+            let secret_path = format!("config.model_providers.{profile_name}.api_key");
+            decrypt_optional_secret(&store, &mut profile.api_key, &secret_path)?;
+        }
+        decrypt_optional_secret(
+            &store,
+            &mut self.transcription.api_key,
+            "config.transcription.api_key",
+        )?;
+        decrypt_optional_secret(
+            &store,
+            &mut self.composio.api_key,
+            "config.composio.api_key",
+        )?;
+        decrypt_optional_secret(
+            &store,
+            &mut self.proxy.http_proxy,
+            "config.proxy.http_proxy",
+        )?;
+        decrypt_optional_secret(
+            &store,
+            &mut self.proxy.https_proxy,
+            "config.proxy.https_proxy",
+        )?;
+        decrypt_optional_secret(&store, &mut self.proxy.all_proxy, "config.proxy.all_proxy")?;
+
+        decrypt_optional_secret(
+            &store,
+            &mut self.browser.computer_use.api_key,
+            "config.browser.computer_use.api_key",
+        )?;
+
+        decrypt_optional_secret(
+            &store,
+            &mut self.web_search.brave_api_key,
+            "config.web_search.brave_api_key",
+        )?;
+        decrypt_optional_secret(
+            &store,
+            &mut self.storage.provider.config.db_url,
+            "config.storage.provider.config.db_url",
+        )?;
+        decrypt_map_secrets(
+            &store,
+            &mut self.reliability.fallback_api_keys,
+            "config.reliability.fallback_api_keys",
+        )?;
+        decrypt_vec_secrets(
+            &store,
+            &mut self.gateway.paired_tokens,
+            "config.gateway.paired_tokens",
+        )?;
+
+        for agent in self.agents.values_mut() {
+            decrypt_optional_secret(&store, &mut agent.api_key, "config.agents.*.api_key")?;
+        }
+
+        decrypt_channel_secrets(&store, &mut self.channels_config)?;
+
+        // Notion API key (top-level, not in ChannelsConfig)
+        if !self.notion.api_key.is_empty() {
+            decrypt_secret(&store, &mut self.notion.api_key, "config.notion.api_key")?;
+        }
+
+        // Atlassian secrets (shared by Jira and Confluence)
+        if !self.atlassian.base_url.is_empty() {
+            decrypt_secret(
+                &store,
+                &mut self.atlassian.base_url,
+                "config.atlassian.base_url",
+            )?;
+        }
+        if !self.atlassian.email.is_empty() {
+            decrypt_secret(&store, &mut self.atlassian.email, "config.atlassian.email")?;
+        }
+        if !self.atlassian.api_token.is_empty() {
+            decrypt_secret(
+                &store,
+                &mut self.atlassian.api_token,
+                "config.atlassian.api_token",
+            )?;
+        }
+
+        // Elasticsearch secret (base64 API key)
+        if !self.elasticsearch.auth.is_empty() {
+            decrypt_secret(
+                &store,
+                &mut self.elasticsearch.auth,
+                "config.elasticsearch.auth",
+            )?;
+        }
+
+        // Elasticsearch endpoint (encrypted URL)
+        if !self.elasticsearch.endpoint.is_empty() {
+            decrypt_secret(
+                &store,
+                &mut self.elasticsearch.endpoint,
+                "config.elasticsearch.endpoint",
+            )?;
+        }
+
+        // GitHub tool access token
+        if !self.github.access_token.is_empty() {
+            decrypt_secret(
+                &store,
+                &mut self.github.access_token,
+                "config.github.access_token",
+            )?;
+        }
+
+        // ServiceNow OAuth2 credentials
+        if !self.servicenow.client_id.is_empty() {
+            decrypt_secret(
+                &store,
+                &mut self.servicenow.client_id,
+                "config.servicenow.client_id",
+            )?;
+        }
+        if !self.servicenow.client_secret.is_empty() {
+            decrypt_secret(
+                &store,
+                &mut self.servicenow.client_secret,
+                "config.servicenow.client_secret",
+            )?;
+        }
+
+        Ok(())
+    }
+
     pub async fn load_or_init() -> Result<Self> {
         let (default_agentzero_dir, default_workspace_dir) = default_config_and_workspace_dirs()?;
 
@@ -6320,141 +6467,7 @@ impl Config {
             // Set computed paths that are skipped during serialization
             config.config_path = config_path.clone();
             config.workspace_dir = workspace_dir;
-            let store = crate::security::SecretStore::new(&agentzero_dir, config.secrets.encrypt);
-            decrypt_optional_secret(&store, &mut config.api_key, "config.api_key")?;
-            for (profile_name, profile) in config.model_providers.iter_mut() {
-                let secret_path = format!("config.model_providers.{profile_name}.api_key");
-                decrypt_optional_secret(&store, &mut profile.api_key, &secret_path)?;
-            }
-            decrypt_optional_secret(
-                &store,
-                &mut config.transcription.api_key,
-                "config.transcription.api_key",
-            )?;
-            decrypt_optional_secret(
-                &store,
-                &mut config.composio.api_key,
-                "config.composio.api_key",
-            )?;
-            decrypt_optional_secret(
-                &store,
-                &mut config.proxy.http_proxy,
-                "config.proxy.http_proxy",
-            )?;
-            decrypt_optional_secret(
-                &store,
-                &mut config.proxy.https_proxy,
-                "config.proxy.https_proxy",
-            )?;
-            decrypt_optional_secret(
-                &store,
-                &mut config.proxy.all_proxy,
-                "config.proxy.all_proxy",
-            )?;
-
-            decrypt_optional_secret(
-                &store,
-                &mut config.browser.computer_use.api_key,
-                "config.browser.computer_use.api_key",
-            )?;
-
-            decrypt_optional_secret(
-                &store,
-                &mut config.web_search.brave_api_key,
-                "config.web_search.brave_api_key",
-            )?;
-            decrypt_optional_secret(
-                &store,
-                &mut config.storage.provider.config.db_url,
-                "config.storage.provider.config.db_url",
-            )?;
-            decrypt_map_secrets(
-                &store,
-                &mut config.reliability.fallback_api_keys,
-                "config.reliability.fallback_api_keys",
-            )?;
-            decrypt_vec_secrets(
-                &store,
-                &mut config.gateway.paired_tokens,
-                "config.gateway.paired_tokens",
-            )?;
-
-            for agent in config.agents.values_mut() {
-                decrypt_optional_secret(&store, &mut agent.api_key, "config.agents.*.api_key")?;
-            }
-
-            decrypt_channel_secrets(&store, &mut config.channels_config)?;
-
-            // Notion API key (top-level, not in ChannelsConfig)
-            if !config.notion.api_key.is_empty() {
-                decrypt_secret(&store, &mut config.notion.api_key, "config.notion.api_key")?;
-            }
-
-            // Atlassian secrets (shared by Jira and Confluence)
-            if !config.atlassian.base_url.is_empty() {
-                decrypt_secret(
-                    &store,
-                    &mut config.atlassian.base_url,
-                    "config.atlassian.base_url",
-                )?;
-            }
-            if !config.atlassian.email.is_empty() {
-                decrypt_secret(
-                    &store,
-                    &mut config.atlassian.email,
-                    "config.atlassian.email",
-                )?;
-            }
-            if !config.atlassian.api_token.is_empty() {
-                decrypt_secret(
-                    &store,
-                    &mut config.atlassian.api_token,
-                    "config.atlassian.api_token",
-                )?;
-            }
-
-            // Elasticsearch secret (base64 API key)
-            if !config.elasticsearch.auth.is_empty() {
-                decrypt_secret(
-                    &store,
-                    &mut config.elasticsearch.auth,
-                    "config.elasticsearch.auth",
-                )?;
-            }
-
-            // Elasticsearch endpoint (encrypted URL)
-            if !config.elasticsearch.endpoint.is_empty() {
-                decrypt_secret(
-                    &store,
-                    &mut config.elasticsearch.endpoint,
-                    "config.elasticsearch.endpoint",
-                )?;
-            }
-
-            // GitHub tool access token
-            if !config.github.access_token.is_empty() {
-                decrypt_secret(
-                    &store,
-                    &mut config.github.access_token,
-                    "config.github.access_token",
-                )?;
-            }
-
-            // ServiceNow OAuth2 credentials
-            if !config.servicenow.client_id.is_empty() {
-                decrypt_secret(
-                    &store,
-                    &mut config.servicenow.client_id,
-                    "config.servicenow.client_id",
-                )?;
-            }
-            if !config.servicenow.client_secret.is_empty() {
-                decrypt_secret(
-                    &store,
-                    &mut config.servicenow.client_secret,
-                    "config.servicenow.client_secret",
-                )?;
-            }
+            config.decrypt_secrets()?;
 
             config.apply_env_overrides();
             config.validate()?;

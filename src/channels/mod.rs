@@ -1195,23 +1195,6 @@ async fn config_file_stamp(path: &Path) -> Option<ConfigFileStamp> {
     })
 }
 
-fn decrypt_optional_secret_for_runtime_reload(
-    store: &crate::security::SecretStore,
-    value: &mut Option<String>,
-    field_name: &str,
-) -> Result<()> {
-    if let Some(raw) = value.clone() {
-        if crate::security::SecretStore::is_encrypted(&raw) {
-            *value = Some(
-                store
-                    .decrypt(&raw)
-                    .with_context(|| format!("Failed to decrypt {field_name}"))?,
-            );
-        }
-    }
-    Ok(())
-}
-
 async fn load_runtime_defaults_from_config_file(
     path: &Path,
 ) -> Result<(ChannelRuntimeDefaults, RuntimeAutonomyPolicy)> {
@@ -1221,16 +1204,11 @@ async fn load_runtime_defaults_from_config_file(
     let mut parsed: Config =
         toml::from_str(&contents).with_context(|| format!("Failed to parse {}", path.display()))?;
     parsed.config_path = path.to_path_buf();
-
-    if let Some(agentzero_dir) = path.parent() {
-        let store = crate::security::SecretStore::new(agentzero_dir, parsed.secrets.encrypt);
-        decrypt_optional_secret_for_runtime_reload(&store, &mut parsed.api_key, "config.api_key")?;
-        decrypt_optional_secret_for_runtime_reload(
-            &store,
-            &mut parsed.transcription.api_key,
-            "config.transcription.api_key",
-        )?;
-    }
+    // Must decrypt the same fields `Config::load_or_init` decrypts (including
+    // `reliability.fallback_api_keys`), or a runtime toggle like
+    // `/fallback-enabled` rebuilds providers with still-encrypted ciphertext
+    // as their credential instead of the real secret.
+    parsed.decrypt_secrets()?;
 
     parsed.apply_env_overrides();
     Ok((
@@ -9737,6 +9715,55 @@ BTC is currently around $65,000 based on latest tool output."#
             .expect("runtime defaults");
         assert_eq!(defaults.default_provider, "openai");
         assert_eq!(defaults.model, "gpt-5.4");
+    }
+
+    #[tokio::test]
+    async fn load_runtime_defaults_from_config_file_decrypts_fallback_api_keys() {
+        // Regression test: a runtime config reload (triggered by e.g.
+        // `/fallback-enabled true`) must decrypt `reliability.fallback_api_keys`
+        // the same way `Config::load_or_init` does at startup. Otherwise the
+        // rebuilt fallback provider is handed still-encrypted ciphertext as
+        // its credential and every request fails with an auth error until
+        // the process is restarted (which re-runs the full decrypt path).
+        let temp = tempfile::TempDir::new().expect("temp dir");
+        let config_path = temp.path().join("config.toml");
+        let workspace_dir = temp.path().join("workspace");
+        std::fs::create_dir_all(&workspace_dir).expect("workspace dir");
+
+        let mut cfg = Config::default();
+        cfg.config_path = config_path.clone();
+        cfg.workspace_dir = workspace_dir;
+        assert!(
+            cfg.secrets.encrypt,
+            "test assumes secret encryption is on by default"
+        );
+        cfg.reliability
+            .fallback_api_keys
+            .insert("anthropic".to_string(), "sk-ant-real-secret".to_string());
+        cfg.save().await.expect("save config");
+
+        // `save` encrypts secret fields in place on disk; confirm the map is
+        // actually stored as ciphertext so this test would fail without the fix.
+        let persisted = tokio::fs::read_to_string(&config_path)
+            .await
+            .expect("read config");
+        assert!(
+            !persisted.contains("sk-ant-real-secret"),
+            "fallback_api_keys should be encrypted at rest"
+        );
+
+        let (defaults, _policy) = load_runtime_defaults_from_config_file(&config_path)
+            .await
+            .expect("runtime defaults");
+        assert_eq!(
+            defaults
+                .reliability
+                .fallback_api_keys
+                .get("anthropic")
+                .map(String::as_str),
+            Some("sk-ant-real-secret"),
+            "runtime reload must decrypt fallback_api_keys, not pass through ciphertext"
+        );
     }
 
     #[tokio::test]
