@@ -165,6 +165,9 @@ enum ChannelRuntimeCommand {
     ResetPairing(String),
     /// Empty arg shows current status; `true`/`false` persists and hot-applies.
     SetFallbackEnabled(String),
+    /// Empty arg shows current status; `minimal`/`low`/`medium`/`high`/`xhigh`
+    /// persists and hot-applies; `off`/`default`/`clear`/`reset` clears the override.
+    SetReasoningEffort(String),
     ShowCommands,
 }
 
@@ -189,6 +192,7 @@ struct ChannelRuntimeDefaults {
     api_key: Option<String>,
     api_url: Option<String>,
     reliability: crate::config::ReliabilityConfig,
+    reasoning_level: Option<String>,
     cost: crate::config::CostConfig,
     auto_save_memory: bool,
     max_tool_iterations: usize,
@@ -737,6 +741,9 @@ fn parse_runtime_command(channel_name: &str, content: &str) -> Option<ChannelRun
         "/approvals" => Some(ChannelRuntimeCommand::ListApprovals),
         "/reset-pairing" => Some(ChannelRuntimeCommand::ResetPairing(tail)),
         "/fallback-enabled" => Some(ChannelRuntimeCommand::SetFallbackEnabled(tail)),
+        "/effort" | "/reasoning-effort" | "/reasoning-level" => {
+            Some(ChannelRuntimeCommand::SetReasoningEffort(tail))
+        }
         "/command" | "/commands" | "/help" => Some(ChannelRuntimeCommand::ShowCommands),
         // Provider/model switching remains limited to channels with session routing.
         "/models" if supports_runtime_model_switch(channel_name) => {
@@ -855,6 +862,28 @@ fn parse_natural_language_runtime_command(content: &str) -> Option<ChannelRuntim
     if matches!(lower.as_str(), "fallback-enabled") {
         return Some(ChannelRuntimeCommand::SetFallbackEnabled(String::new()));
     }
+    if let Some(level) = extract_runtime_tail_token(
+        &lower,
+        &[
+            "set reasoning effort to ",
+            "set reasoning level to ",
+            "set effort to ",
+            "reasoning effort to ",
+            "reasoning level to ",
+            "effort to ",
+            "reasoning effort ",
+            "reasoning level ",
+            "effort ",
+        ],
+    ) {
+        return Some(ChannelRuntimeCommand::SetReasoningEffort(level));
+    }
+    if matches!(
+        lower.as_str(),
+        "effort" | "reasoning effort" | "reasoning level"
+    ) {
+        return Some(ChannelRuntimeCommand::SetReasoningEffort(String::new()));
+    }
     if matches!(
         lower.as_str(),
         "command" | "commands" | "help" | "show commands" | "list commands"
@@ -934,6 +963,7 @@ fn runtime_defaults_from_config(config: &Config) -> ChannelRuntimeDefaults {
         api_key: config.api_key.clone(),
         api_url: config.api_url.clone(),
         reliability: config.reliability.clone(),
+        reasoning_level: config.effective_provider_reasoning_level(),
         cost: config.cost.clone(),
         auto_save_memory: config.memory.auto_save,
         max_tool_iterations: config.agent.max_tool_iterations,
@@ -979,6 +1009,18 @@ fn runtime_autonomy_policy_from_config(config: &Config) -> RuntimeAutonomyPolicy
     }
 }
 
+/// Clone `base` with `reasoning_level` overridden from freshly loaded config
+/// defaults, so `provider.reasoning_level` runtime updates (`/effort`) reach
+/// newly constructed providers without requiring a process restart.
+fn provider_runtime_options_with_reasoning_level(
+    base: &providers::ProviderRuntimeOptions,
+    reasoning_level: Option<String>,
+) -> providers::ProviderRuntimeOptions {
+    let mut options = base.clone();
+    options.reasoning_level = reasoning_level;
+    options
+}
+
 fn runtime_config_path(ctx: &ChannelRuntimeContext) -> Option<PathBuf> {
     ctx.provider_runtime_options
         .agentzero_dir
@@ -1003,6 +1045,7 @@ fn runtime_defaults_snapshot(ctx: &ChannelRuntimeContext) -> ChannelRuntimeDefau
         api_key: ctx.api_key.clone(),
         api_url: ctx.api_url.clone(),
         reliability: (*ctx.reliability).clone(),
+        reasoning_level: ctx.provider_runtime_options.reasoning_level.clone(),
         cost: crate::config::CostConfig::default(),
         auto_save_memory: ctx.auto_save_memory,
         max_tool_iterations: ctx.max_tool_iterations,
@@ -1287,6 +1330,44 @@ async fn persist_fallback_enabled(
     parsed.config_path = config_path.clone();
 
     parsed.reliability.fallback_enabled = enabled;
+    parsed.save().await?;
+
+    Ok(Some(config_path))
+}
+
+/// Parse a `/effort` argument into a `provider.reasoning_level` value.
+///
+/// `off`/`default`/`clear`/`reset`/`none` map to `Ok(None)`, which clears the
+/// override. `minimal`/`low`/`medium`/`high`/`xhigh` map to `Ok(Some(_))`.
+fn parse_reasoning_effort_arg(raw: &str) -> Result<Option<String>, String> {
+    let value = raw.trim().to_ascii_lowercase();
+    match value.as_str() {
+        "off" | "default" | "clear" | "reset" | "none" => Ok(None),
+        "minimal" | "low" | "medium" | "high" | "xhigh" => Ok(Some(value)),
+        _ => Err(
+            "Usage: `/effort minimal|low|medium|high|xhigh` (or `/effort off` to clear the override). \
+Leave empty to show the current value."
+                .to_string(),
+        ),
+    }
+}
+
+async fn persist_reasoning_level(
+    ctx: &ChannelRuntimeContext,
+    level: Option<String>,
+) -> Result<Option<PathBuf>> {
+    let Some(config_path) = runtime_config_path(ctx) else {
+        return Ok(None);
+    };
+
+    let contents = tokio::fs::read_to_string(&config_path)
+        .await
+        .with_context(|| format!("Failed to read {}", config_path.display()))?;
+    let mut parsed: Config = toml::from_str(&contents)
+        .with_context(|| format!("Failed to parse {}", config_path.display()))?;
+    parsed.config_path = config_path.clone();
+
+    parsed.provider.reasoning_level = level;
     parsed.save().await?;
 
     Ok(Some(config_path))
@@ -1598,7 +1679,10 @@ async fn maybe_apply_runtime_config_update(ctx: &ChannelRuntimeContext) -> Resul
         next_defaults.reliability.clone(),
         next_defaults.model_routes.clone(),
         next_defaults.model.clone(),
-        ctx.provider_runtime_options.clone(),
+        provider_runtime_options_with_reasoning_level(
+            &ctx.provider_runtime_options,
+            next_defaults.reasoning_level.clone(),
+        ),
     )
     .await?;
     let next_default_provider: Arc<dyn Provider> = Arc::from(next_default_provider);
@@ -2018,7 +2102,10 @@ async fn get_or_create_provider(
         defaults.api_key.clone(),
         api_url.map(ToString::to_string),
         defaults.reliability.clone(),
-        ctx.provider_runtime_options.clone(),
+        provider_runtime_options_with_reasoning_level(
+            &ctx.provider_runtime_options,
+            defaults.reasoning_level.clone(),
+        ),
     )
     .await?;
     let provider: Arc<dyn Provider> = Arc::from(provider);
@@ -2189,10 +2276,17 @@ fn build_runtime_commands_help_response(channel_name: &str) -> String {
     response
         .push_str("- `/reset-pairing <6-digit-code>` — revoke tokens and set a new pairing code\n");
 
+    response.push_str("\nReasoning\n");
+    response.push_str("- `/effort` — show `provider.reasoning_level`\n");
+    response.push_str(
+        "- `/effort minimal|low|medium|high|xhigh` — persist and hot-apply reasoning effort\n",
+    );
+    response.push_str("- `/effort off` — clear the override (use provider default)\n");
+
     response.push_str("\nTips\n");
     response
         .push_str("- Use `+` instead of `/` if slash commands conflict (e.g. Slack): `+command`\n");
-    response.push_str("- Natural language forms also work for several commands (e.g. `fallback-enabled true`, `approve tool shell`)\n");
+    response.push_str("- Natural language forms also work for several commands (e.g. `fallback-enabled true`, `set effort to high`, `approve tool shell`)\n");
 
     response
 }
@@ -2912,6 +3006,51 @@ Config path: `{}`.",
                         }
                         Err(err) => {
                             format!("Failed to persist `reliability.fallback_enabled`: {err}")
+                        }
+                    },
+                    Err(usage) => usage,
+                }
+            }
+        }
+        ChannelRuntimeCommand::SetReasoningEffort(raw_level) => {
+            let raw_level = raw_level.trim();
+            if raw_level.is_empty() {
+                let current = runtime_defaults_snapshot(ctx).reasoning_level;
+                match current {
+                    Some(level) => format!(
+                        "`provider.reasoning_level` is currently `{level}`.\n\
+Usage: `/effort minimal|low|medium|high|xhigh` (or `/effort off` to clear)."
+                    ),
+                    None => "`provider.reasoning_level` is not set (provider default effort).\n\
+Usage: `/effort minimal|low|medium|high|xhigh` (or `/effort off` to clear)."
+                        .to_string(),
+                }
+            } else {
+                match parse_reasoning_effort_arg(raw_level) {
+                    Ok(level) => match persist_reasoning_level(ctx, level.clone()).await {
+                        Ok(Some(config_path)) => {
+                            let level_label = level.as_deref().unwrap_or("(cleared, provider default)");
+                            if let Err(err) = maybe_apply_runtime_config_update(ctx).await {
+                                format!(
+                                    "Persisted `provider.reasoning_level = {level_label}` to `{}`, \
+but failed to hot-apply runtime providers: {err}. \
+The change will apply on the next inbound message or process restart.",
+                                    config_path.display()
+                                )
+                            } else {
+                                format!(
+                                    "`provider.reasoning_level` set to `{level_label}` and hot-applied.\n\
+Config path: `{}`.",
+                                    config_path.display()
+                                )
+                            }
+                        }
+                        Ok(None) => {
+                            "Runtime config path was not available; could not update `provider.reasoning_level`."
+                                .to_string()
+                        }
+                        Err(err) => {
+                            format!("Failed to persist `provider.reasoning_level`: {err}")
                         }
                     },
                     Err(usage) => usage,
@@ -5501,6 +5640,7 @@ mod tests {
         assert!(help.contains("`/fallback-enabled`"));
         assert!(help.contains("`/reset-pairing"));
         assert!(help.contains("`/command`"));
+        assert!(help.contains("`/effort`"));
     }
 
     #[test]
@@ -5536,6 +5676,52 @@ mod tests {
         assert_eq!(parse_fallback_enabled_arg("1"), Ok(true));
         assert_eq!(parse_fallback_enabled_arg("0"), Ok(false));
         assert!(parse_fallback_enabled_arg("maybe").is_err());
+    }
+
+    #[test]
+    fn parse_runtime_command_recognizes_reasoning_effort() {
+        assert_eq!(
+            parse_runtime_command("slack", "/effort high"),
+            Some(ChannelRuntimeCommand::SetReasoningEffort(
+                "high".to_string()
+            ))
+        );
+        assert_eq!(
+            parse_runtime_command("slack", "+effort xhigh"),
+            Some(ChannelRuntimeCommand::SetReasoningEffort(
+                "xhigh".to_string()
+            ))
+        );
+        assert_eq!(
+            parse_runtime_command("slack", "/reasoning-effort medium"),
+            Some(ChannelRuntimeCommand::SetReasoningEffort(
+                "medium".to_string()
+            ))
+        );
+        assert_eq!(
+            parse_runtime_command("slack", "/reasoning-level off"),
+            Some(ChannelRuntimeCommand::SetReasoningEffort("off".to_string()))
+        );
+        assert_eq!(
+            parse_runtime_command("slack", "/effort"),
+            Some(ChannelRuntimeCommand::SetReasoningEffort(String::new()))
+        );
+    }
+
+    #[test]
+    fn parse_reasoning_effort_arg_accepts_known_levels() {
+        assert_eq!(
+            parse_reasoning_effort_arg("high"),
+            Ok(Some("high".to_string()))
+        );
+        assert_eq!(
+            parse_reasoning_effort_arg("XHIGH"),
+            Ok(Some("xhigh".to_string()))
+        );
+        assert_eq!(parse_reasoning_effort_arg("off"), Ok(None));
+        assert_eq!(parse_reasoning_effort_arg("default"), Ok(None));
+        assert_eq!(parse_reasoning_effort_arg("clear"), Ok(None));
+        assert!(parse_reasoning_effort_arg("banana").is_err());
     }
 
     #[test]
@@ -5585,6 +5771,42 @@ mod tests {
         assert_eq!(
             parse_runtime_command("slack", "fallback-enabled"),
             Some(ChannelRuntimeCommand::SetFallbackEnabled(String::new()))
+        );
+    }
+
+    #[test]
+    fn parse_runtime_command_supports_natural_language_reasoning_effort() {
+        assert_eq!(
+            parse_runtime_command("slack", "effort high"),
+            Some(ChannelRuntimeCommand::SetReasoningEffort(
+                "high".to_string()
+            ))
+        );
+        assert_eq!(
+            parse_runtime_command("slack", "set effort to high"),
+            Some(ChannelRuntimeCommand::SetReasoningEffort(
+                "high".to_string()
+            ))
+        );
+        assert_eq!(
+            parse_runtime_command("slack", "reasoning effort medium"),
+            Some(ChannelRuntimeCommand::SetReasoningEffort(
+                "medium".to_string()
+            ))
+        );
+        assert_eq!(
+            parse_runtime_command("slack", "set reasoning level to xhigh"),
+            Some(ChannelRuntimeCommand::SetReasoningEffort(
+                "xhigh".to_string()
+            ))
+        );
+        assert_eq!(
+            parse_runtime_command("slack", "effort"),
+            Some(ChannelRuntimeCommand::SetReasoningEffort(String::new()))
+        );
+        assert_eq!(
+            parse_runtime_command("slack", "reasoning effort"),
+            Some(ChannelRuntimeCommand::SetReasoningEffort(String::new()))
         );
     }
 
@@ -9319,6 +9541,7 @@ BTC is currently around $65,000 based on latest tool output."#
                         api_key: None,
                         api_url: None,
                         reliability: crate::config::ReliabilityConfig::default(),
+                        reasoning_level: None,
                         cost: crate::config::CostConfig::default(),
                         auto_save_memory: false,
                         max_tool_iterations: 5,
@@ -9513,7 +9736,7 @@ BTC is currently around $65,000 based on latest tool output."#
             .await
             .expect("runtime defaults");
         assert_eq!(defaults.default_provider, "openai");
-        assert_eq!(defaults.model, "gpt-5.2");
+        assert_eq!(defaults.model, "gpt-5.4");
     }
 
     #[tokio::test]
@@ -9912,6 +10135,87 @@ BTC is currently around $65,000 based on latest tool output."#
             .expect("read config");
         let parsed: Config = toml::from_str(&persisted).expect("parse config");
         assert!(parsed.reliability.fallback_enabled);
+    }
+
+    #[tokio::test]
+    async fn persist_reasoning_level_updates_provider_config() {
+        let temp = tempfile::TempDir::new().expect("temp dir");
+        let config_path = temp.path().join("config.toml");
+        let workspace_dir = temp.path().join("workspace");
+        std::fs::create_dir_all(&workspace_dir).expect("workspace dir");
+
+        let mut cfg = Config::default();
+        cfg.config_path = config_path.clone();
+        cfg.workspace_dir = workspace_dir.clone();
+        cfg.save().await.expect("save initial config");
+
+        let runtime_ctx = Arc::new(ChannelRuntimeContext {
+            channels_by_name: Arc::new(HashMap::new()),
+            provider: Arc::new(ModelCaptureProvider::default()),
+            default_provider: Arc::new("test-provider".to_string()),
+            memory: Arc::new(NoopMemory),
+            tools_registry: Arc::new(vec![]),
+            observer: Arc::new(NoopObserver),
+            system_prompt: Arc::new("test-system-prompt".to_string()),
+            model: Arc::new("test-model".to_string()),
+            temperature: 0.0,
+            auto_save_memory: false,
+            max_tool_iterations: 5,
+            max_history_messages: 50,
+            min_relevance_score: 0.0,
+            conversation_histories: Arc::new(Mutex::new(HashMap::new())),
+            conversation_locks: Default::default(),
+            session_config: crate::config::AgentSessionConfig::default(),
+            session_manager: None,
+            provider_cache: Arc::new(Mutex::new(HashMap::new())),
+            route_overrides: Arc::new(Mutex::new(HashMap::new())),
+            api_key: None,
+            api_url: None,
+            reliability: Arc::new(crate::config::ReliabilityConfig::default()),
+            provider_runtime_options: providers::ProviderRuntimeOptions {
+                agentzero_dir: Some(temp.path().to_path_buf()),
+                ..providers::ProviderRuntimeOptions::default()
+            },
+            workspace_dir: Arc::new(workspace_dir),
+            message_timeout_secs: CHANNEL_MESSAGE_TIMEOUT_SECS,
+            interrupt_on_new_message: false,
+            multimodal: crate::config::MultimodalConfig::default(),
+            hooks: None,
+            non_cli_excluded_tools: Arc::new(Mutex::new(Vec::new())),
+            query_classification: crate::config::QueryClassificationConfig::default(),
+            model_routes: Vec::new(),
+            approval_manager: Arc::new(ApprovalManager::from_config(
+                &crate::config::AutonomyConfig::default(),
+            )),
+            safety_heartbeat: None,
+            startup_perplexity_filter: crate::config::PerplexityFilterConfig::default(),
+            gateway_pairing: None,
+            #[cfg(feature = "skill-creation")]
+            skill_creation: crate::config::SkillCreationConfig::default(),
+            timezone_override: None,
+        });
+
+        persist_reasoning_level(runtime_ctx.as_ref(), Some("xhigh".to_string()))
+            .await
+            .expect("persist reasoning_level")
+            .expect("config path");
+
+        let persisted = tokio::fs::read_to_string(&config_path)
+            .await
+            .expect("read config");
+        let parsed: Config = toml::from_str(&persisted).expect("parse config");
+        assert_eq!(parsed.provider.reasoning_level.as_deref(), Some("xhigh"));
+
+        persist_reasoning_level(runtime_ctx.as_ref(), None)
+            .await
+            .expect("clear reasoning_level")
+            .expect("config path");
+
+        let persisted = tokio::fs::read_to_string(&config_path)
+            .await
+            .expect("read config");
+        let parsed: Config = toml::from_str(&persisted).expect("parse config");
+        assert_eq!(parsed.provider.reasoning_level, None);
     }
 
     #[tokio::test]

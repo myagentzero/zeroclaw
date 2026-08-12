@@ -494,6 +494,15 @@ pub trait Provider: Send + Sync {
         None
     }
 
+    /// Apply a `provider.reasoning_level` override (`minimal`/`low`/`medium`/`high`/`xhigh`)
+    /// to this provider's outgoing chat requests, if it supports the concept.
+    ///
+    /// Default implementation is a no-op. Providers that expose an explicit
+    /// reasoning/effort control (e.g. the generic OpenAI-compatible provider's
+    /// `reasoning_effort` field, or Anthropic's `output_config.effort`) override
+    /// this to store the level and thread it into requests.
+    fn set_reasoning_level(&self, _level: Option<String>) {}
+
     /// Chat with tool definitions for native function calling support.
     /// The default implementation falls back to chat_with_history and returns
     /// an empty tool_calls vector (prompt-based tool use only).

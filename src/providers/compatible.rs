@@ -99,6 +99,10 @@ pub struct OpenAiCompatibleProvider {
     pub(crate) litellm_cache: Option<LiteLlmCacheConfig>,
     /// Last Responses API response ID, used for chaining to reduce context on subsequent calls.
     last_response_id: Arc<Mutex<Option<String>>>,
+    /// Optional `provider.reasoning_level` override, sent as `reasoning_effort`
+    /// on outgoing chat completions requests. Set via `set_reasoning_level`
+    /// after construction, since `Provider` trait methods take `&self`.
+    reasoning_level: Arc<Mutex<Option<String>>>,
 }
 
 /// How the provider expects the API key to be sent.
@@ -304,7 +308,16 @@ impl OpenAiCompatibleProvider {
             max_tokens_override: max_tokens_override.filter(|value| *value > 0),
             litellm_cache: None,
             last_response_id: Arc::new(Mutex::new(None)),
+            reasoning_level: Arc::new(Mutex::new(None)),
         }
+    }
+
+    /// Current `reasoning_effort` value to send on outgoing requests, if set.
+    fn reasoning_effort(&self) -> Option<String> {
+        self.reasoning_level
+            .lock()
+            .ok()
+            .and_then(|guard| guard.clone())
     }
 
     /// Collect all `system` role messages, concatenate their content,
@@ -517,6 +530,12 @@ struct ApiChatRequest {
     tool_choice: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     cache: Option<LiteLlmCacheConfig>,
+    /// OpenAI-style reasoning effort control (`minimal`/`low`/`medium`/`high`/`xhigh`),
+    /// sourced from `provider.reasoning_level`. Many OpenAI-compatible gateways
+    /// (LiteLLM, reasoning-capable models on Groq/xAI/etc.) recognize this field;
+    /// providers that don't support it should simply ignore the unknown key.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reasoning_effort: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -2333,6 +2352,7 @@ impl Provider for OpenAiCompatibleProvider {
             tools: None,
             tool_choice: None,
             cache: self.litellm_cache.clone(),
+            reasoning_effort: self.reasoning_effort(),
         };
 
         let url = self.chat_completions_url();
@@ -2468,6 +2488,7 @@ impl Provider for OpenAiCompatibleProvider {
             tools: None,
             tool_choice: None,
             cache: self.litellm_cache.clone(),
+            reasoning_effort: self.reasoning_effort(),
         };
 
         if self.should_use_responses_mode() {
@@ -2600,6 +2621,7 @@ impl Provider for OpenAiCompatibleProvider {
                 Some("auto".to_string())
             },
             cache: self.litellm_cache.clone(),
+            reasoning_effort: self.reasoning_effort(),
         };
 
         if self.should_use_responses_mode() {
@@ -2917,6 +2939,7 @@ impl Provider for OpenAiCompatibleProvider {
             tools: None,
             tool_choice: None,
             cache: self.litellm_cache.clone(),
+            reasoning_effort: self.reasoning_effort(),
         };
 
         let url = self.chat_completions_url();
@@ -3013,6 +3036,12 @@ impl Provider for OpenAiCompatibleProvider {
 
     fn warmup_key(&self) -> Option<String> {
         Some(self.base_url.clone())
+    }
+
+    fn set_reasoning_level(&self, level: Option<String>) {
+        if let Ok(mut guard) = self.reasoning_level.lock() {
+            *guard = level;
+        }
     }
 }
 
@@ -3125,6 +3154,7 @@ mod tests {
             tools: None,
             tool_choice: None,
             cache: None,
+            reasoning_effort: None,
         };
         let json = serde_json::to_string(&req).unwrap();
         assert!(json.contains("llama-3.3-70b"));
@@ -4590,11 +4620,60 @@ mod tests {
             tools: Some(tools),
             tool_choice: Some("auto".to_string()),
             cache: None,
+            reasoning_effort: None,
         };
         let json = serde_json::to_string(&req).unwrap();
         assert!(json.contains("\"tools\""));
         assert!(json.contains("get_weather"));
         assert!(json.contains("\"tool_choice\":\"auto\""));
+    }
+
+    #[test]
+    fn request_serializes_reasoning_effort_when_set() {
+        let req = ApiChatRequest {
+            model: "llama-3.3-70b".to_string(),
+            messages: vec![Message {
+                role: "user".to_string(),
+                content: MessageContent::Text("hello".to_string()),
+            }],
+            max_tokens: None,
+            stream: Some(false),
+            tools: None,
+            tool_choice: None,
+            cache: None,
+            reasoning_effort: Some("high".to_string()),
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        assert!(json.contains("\"reasoning_effort\":\"high\""));
+    }
+
+    #[test]
+    fn request_omits_reasoning_effort_when_unset() {
+        let req = ApiChatRequest {
+            model: "llama-3.3-70b".to_string(),
+            messages: vec![Message {
+                role: "user".to_string(),
+                content: MessageContent::Text("hello".to_string()),
+            }],
+            max_tokens: None,
+            stream: Some(false),
+            tools: None,
+            tool_choice: None,
+            cache: None,
+            reasoning_effort: None,
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        assert!(!json.contains("reasoning_effort"));
+    }
+
+    #[test]
+    fn set_reasoning_level_updates_outgoing_effort() {
+        let p = make_provider("Venice", "https://api.venice.ai", None);
+        assert_eq!(p.reasoning_effort(), None);
+        p.set_reasoning_level(Some("xhigh".to_string()));
+        assert_eq!(p.reasoning_effort(), Some("xhigh".to_string()));
+        p.set_reasoning_level(None);
+        assert_eq!(p.reasoning_effort(), None);
     }
 
     #[test]

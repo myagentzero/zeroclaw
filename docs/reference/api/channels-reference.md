@@ -46,6 +46,9 @@ When running `agentzero channel start` (or daemon mode), Discord and Slack suppo
 - `/new` — clear conversation history and start a fresh session
 - `/fallback-enabled` — show current `reliability.fallback_enabled`
 - `/fallback-enabled true|false` — persist and hot-apply the fallback provider chain toggle
+- `/effort` (or `/reasoning-effort` / `/reasoning-level`) — show current `provider.reasoning_level`
+- `/effort minimal|low|medium|high|xhigh` — persist and hot-apply the provider's reasoning effort
+- `/effort off` (also `default`/`clear`/`reset`) — clear the override and use the provider's default effort
 - `/command` (or `command` / `commands` / `help`) — list available runtime commands
 
 Notes:
@@ -55,6 +58,7 @@ Notes:
 - Model cache previews come from `agentzero models refresh --provider <ID>`.
 - These are runtime chat commands, not CLI subcommands.
 - `/fallback-enabled` also accepts `on`/`off`, `yes`/`no`, and `1`/`0`, plus the `+fallback-enabled` prefix form (useful on Slack).
+- `/effort` also accepts natural language (`effort high`, `set effort to xhigh`, `reasoning level medium`) plus the `+effort` prefix form (useful on Slack). It is honored by the generic OpenAI-compatible provider (`reasoning_effort`) and Anthropic (`output_config.effort`); other providers ignore it.
 - On Slack, prefer `+command` if `/command` is claimed by Slack slash commands.
 
 ## Inbound Image Marker Protocol

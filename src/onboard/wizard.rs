@@ -845,14 +845,14 @@ fn default_model_for_provider(provider: &str) -> String {
     }
 
     match canonical_provider_name(provider) {
-        "anthropic" => "claude-sonnet-4-5-20250929".into(),
-        "openai" => "gpt-5.2".into(),
-        "openai-codex" => "gpt-5-codex".into(),
+        "anthropic" => "claude-sonnet-5".into(),
+        "openai" => "gpt-5.4".into(),
+        "openai-codex" => "gpt-5.3-codex".into(),
         "venice" => "zai-org-glm-5".into(),
-        "groq" => "llama-3.3-70b-versatile".into(),
+        "groq" => "openai/gpt-oss-120b".into(),
         "mistral" => "mistral-large-latest".into(),
-        "deepseek" => "deepseek-chat".into(),
-        "xai" => "grok-4-1-fast-reasoning".into(),
+        "deepseek" => "deepseek-v4-flash".into(),
+        "xai" => "grok-4.5".into(),
         "perplexity" => "sonar-pro".into(),
         "fireworks" => "accounts/fireworks/models/llama-v3p3-70b-instruct".into(),
         "novita" => "minimax/minimax-m2.5".into(),
@@ -862,23 +862,23 @@ fn default_model_for_provider(provider: &str) -> String {
         "cerebras" => "llama3.1-70b".into(),
         "sambanova" => "Meta-Llama-3.3-70B-Instruct".into(),
         "replicate" => "meta/meta-llama-3-70b-instruct".into(),
-        "moonshot" => "kimi-k2.5".into(),
+        "moonshot" => "kimi-k2.6".into(),
         "stepfun" => "step-3.5-flash".into(),
         "hunyuan" => "hunyuan-t1-latest".into(),
         "glm" | "zai" => "glm-5".into(),
         "minimax" => "MiniMax-M2.5".into(),
         "qwen" => "qwen-plus".into(),
-        "volcengine" => "doubao-1-5-pro-32k-250115".into(),
-        "siliconflow" => "Pro/zai-org/GLM-4.7".into(),
+        "volcengine" => "doubao-seed-1-6-250615".into(),
+        "siliconflow" => "Pro/zai-org/GLM-5".into(),
         "qwen-code" => "qwen3-coder-plus".into(),
-        "ollama" => "llama3.2".into(),
+        "ollama" => "llama3.3".into(),
         "llamacpp" => "ggml-org/gpt-oss-20b-GGUF".into(),
         "sglang" | "vllm" | "osaurus" | "copilot" => "default".into(),
-        "gemini" => "gemini-2.5-pro".into(),
+        "gemini" => "gemini-3-pro-preview".into(),
         "kimi-code" => "kimi-for-coding".into(),
-        "bedrock" => "anthropic.claude-sonnet-4-5-20250929-v1:0".into(),
+        "bedrock" => "anthropic.claude-sonnet-5".into(),
         "nvidia" => "meta/llama-3.3-70b-instruct".into(),
-        _ => "anthropic/claude-sonnet-4.6".into(),
+        _ => "anthropic/claude-sonnet-5".into(),
     }
 }
 
@@ -6209,14 +6209,11 @@ mod tests {
     fn default_model_for_provider_uses_latest_defaults() {
         assert_eq!(
             default_model_for_provider("openrouter"),
-            "anthropic/claude-sonnet-4.6"
+            "anthropic/claude-sonnet-5"
         );
-        assert_eq!(default_model_for_provider("openai"), "gpt-5.2");
-        assert_eq!(default_model_for_provider("openai-codex"), "gpt-5-codex");
-        assert_eq!(
-            default_model_for_provider("anthropic"),
-            "claude-sonnet-4-5-20250929"
-        );
+        assert_eq!(default_model_for_provider("openai"), "gpt-5.4");
+        assert_eq!(default_model_for_provider("openai-codex"), "gpt-5.3-codex");
+        assert_eq!(default_model_for_provider("anthropic"), "claude-sonnet-5");
         assert_eq!(default_model_for_provider("qwen"), "qwen-plus");
         assert_eq!(default_model_for_provider("qwen-intl"), "qwen-plus");
         assert_eq!(
@@ -6227,8 +6224,8 @@ mod tests {
         assert_eq!(default_model_for_provider("glm-cn"), "glm-5");
         assert_eq!(default_model_for_provider("minimax-cn"), "MiniMax-M2.5");
         assert_eq!(default_model_for_provider("zai-cn"), "glm-5");
-        assert_eq!(default_model_for_provider("gemini"), "gemini-2.5-pro");
-        assert_eq!(default_model_for_provider("google"), "gemini-2.5-pro");
+        assert_eq!(default_model_for_provider("gemini"), "gemini-3-pro-preview");
+        assert_eq!(default_model_for_provider("google"), "gemini-3-pro-preview");
         assert_eq!(default_model_for_provider("copilot"), "default");
         assert_eq!(default_model_for_provider("kimi-code"), "kimi-for-coding");
         assert_eq!(default_model_for_provider("ai21"), "jamba-1.5-large");
@@ -6247,24 +6244,24 @@ mod tests {
         );
         assert_eq!(
             default_model_for_provider("bedrock"),
-            "anthropic.claude-sonnet-4-5-20250929-v1:0"
+            "anthropic.claude-sonnet-5"
         );
         assert_eq!(
             default_model_for_provider("google-gemini"),
-            "gemini-2.5-pro"
+            "gemini-3-pro-preview"
         );
         assert_eq!(default_model_for_provider("venice"), "zai-org-glm-5");
-        assert_eq!(default_model_for_provider("moonshot"), "kimi-k2.5");
+        assert_eq!(default_model_for_provider("moonshot"), "kimi-k2.6");
         assert_eq!(default_model_for_provider("stepfun"), "step-3.5-flash");
         assert_eq!(default_model_for_provider("hunyuan"), "hunyuan-t1-latest");
         assert_eq!(default_model_for_provider("tencent"), "hunyuan-t1-latest");
         assert_eq!(
             default_model_for_provider("siliconflow"),
-            "Pro/zai-org/GLM-4.7"
+            "Pro/zai-org/GLM-5"
         );
         assert_eq!(
             default_model_for_provider("volcengine"),
-            "doubao-1-5-pro-32k-250115"
+            "doubao-seed-1-6-250615"
         );
         assert_eq!(
             default_model_for_provider("nvidia"),
@@ -6282,8 +6279,12 @@ mod tests {
         assert_eq!(default_model_for_provider("vllm"), "default");
         assert_eq!(
             default_model_for_provider("astrai"),
-            "anthropic/claude-sonnet-4.6"
+            "anthropic/claude-sonnet-5"
         );
+        assert_eq!(default_model_for_provider("groq"), "openai/gpt-oss-120b");
+        assert_eq!(default_model_for_provider("deepseek"), "deepseek-v4-flash");
+        assert_eq!(default_model_for_provider("xai"), "grok-4.5");
+        assert_eq!(default_model_for_provider("ollama"), "llama3.3");
     }
 
     #[test]

@@ -11,6 +11,10 @@ use serde::{Deserialize, Serialize};
 pub struct AnthropicProvider {
     credential: Option<String>,
     base_url: String,
+    /// Optional `provider.reasoning_level` override, sent as `output_config.effort`
+    /// on outgoing `/v1/messages` requests. Set via `set_reasoning_level` after
+    /// construction, since `Provider` trait methods take `&self`.
+    reasoning_level: std::sync::Mutex<Option<String>>,
 }
 
 #[derive(Debug, Serialize)]
@@ -20,6 +24,15 @@ struct ChatRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     system: Option<String>,
     messages: Vec<Message>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    output_config: Option<OutputConfig>,
+}
+
+/// Controls how many tokens Claude spends on a response (`effort` parameter).
+/// See <https://platform.claude.com/docs/en/build-with-claude/effort>.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+struct OutputConfig {
+    effort: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -50,6 +63,8 @@ struct NativeChatRequest<'a> {
     messages: Vec<NativeMessage>,
     #[serde(skip_serializing_if = "Option::is_none")]
     tools: Option<Vec<NativeToolSpec<'a>>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    output_config: Option<OutputConfig>,
 }
 
 #[derive(Debug, Serialize)]
@@ -185,11 +200,32 @@ impl AnthropicProvider {
                 .filter(|k| !k.is_empty())
                 .map(ToString::to_string),
             base_url,
+            reasoning_level: std::sync::Mutex::new(None),
         }
     }
 
     fn is_setup_token(token: &str) -> bool {
         token.starts_with("sk-ant-oat01-")
+    }
+
+    /// Current `output_config.effort` value to send on outgoing requests, if set.
+    ///
+    /// Anthropic's `effort` parameter accepts `low`/`medium`/`high`/`xhigh`/`max`;
+    /// our shared `provider.reasoning_level` vocabulary additionally allows
+    /// `minimal`, which is mapped down to `low` since Anthropic has no equivalent.
+    fn effective_output_config(&self) -> Option<OutputConfig> {
+        let level = self
+            .reasoning_level
+            .lock()
+            .ok()
+            .and_then(|guard| guard.clone())?;
+        let effort = match level.as_str() {
+            "minimal" => "low",
+            other => other,
+        };
+        Some(OutputConfig {
+            effort: effort.to_string(),
+        })
     }
 
     fn apply_auth(
@@ -568,6 +604,7 @@ impl Provider for AnthropicProvider {
                 role: "user".to_string(),
                 content: message.to_string(),
             }],
+            output_config: self.effective_output_config(),
         };
 
         let response = self.post_messages(credential, &request).await?;
@@ -608,6 +645,7 @@ impl Provider for AnthropicProvider {
             system: system_prompt,
             messages,
             tools: Self::convert_tools(request.tools),
+            output_config: self.effective_output_config(),
         };
 
         let response = self.post_messages(credential, &native_request).await?;
@@ -703,6 +741,12 @@ impl Provider for AnthropicProvider {
 
     fn warmup_key(&self) -> Option<String> {
         Some(self.base_url.clone())
+    }
+
+    fn set_reasoning_level(&self, level: Option<String>) {
+        if let Ok(mut guard) = self.reasoning_level.lock() {
+            *guard = level;
+        }
     }
 }
 
@@ -854,6 +898,7 @@ mod tests {
                 role: "user".to_string(),
                 content: "hello".to_string(),
             }],
+            output_config: None,
         };
         let json = serde_json::to_string(&req).unwrap();
         assert!(
@@ -874,9 +919,62 @@ mod tests {
                 role: "user".to_string(),
                 content: "hello".to_string(),
             }],
+            output_config: None,
         };
         let json = serde_json::to_string(&req).unwrap();
         assert!(json.contains("\"system\":\"You are AgentZero\""));
+    }
+
+    #[test]
+    fn chat_request_serializes_output_config_when_set() {
+        let req = ChatRequest {
+            model: "claude-3-opus".to_string(),
+            max_tokens: 4096,
+            system: None,
+            messages: vec![Message {
+                role: "user".to_string(),
+                content: "hello".to_string(),
+            }],
+            output_config: Some(OutputConfig {
+                effort: "xhigh".to_string(),
+            }),
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        assert!(json.contains(r#""output_config":{"effort":"xhigh"}"#));
+    }
+
+    #[test]
+    fn set_reasoning_level_updates_output_config() {
+        let p = AnthropicProvider::new(None);
+        assert_eq!(p.effective_output_config(), None);
+
+        p.set_reasoning_level(Some("high".to_string()));
+        assert_eq!(
+            p.effective_output_config(),
+            Some(OutputConfig {
+                effort: "high".to_string()
+            })
+        );
+    }
+
+    #[test]
+    fn set_reasoning_level_maps_minimal_to_low() {
+        let p = AnthropicProvider::new(None);
+        p.set_reasoning_level(Some("minimal".to_string()));
+        assert_eq!(
+            p.effective_output_config(),
+            Some(OutputConfig {
+                effort: "low".to_string()
+            })
+        );
+    }
+
+    #[test]
+    fn set_reasoning_level_none_clears_output_config() {
+        let p = AnthropicProvider::new(None);
+        p.set_reasoning_level(Some("high".to_string()));
+        p.set_reasoning_level(None);
+        assert_eq!(p.effective_output_config(), None);
     }
 
     #[test]
@@ -1281,6 +1379,7 @@ mod tests {
                 }],
             }],
             tools: None,
+            output_config: None,
         };
 
         let json = serde_json::to_string(&req).unwrap();
@@ -1373,6 +1472,7 @@ mod tests {
         let provider = AnthropicProvider {
             credential: Some("test-key".to_string()),
             base_url: format!("http://{addr}"),
+            reasoning_level: std::sync::Mutex::new(None),
         };
 
         // Multi-turn conversation: system → user (Go code) → assistant (code response) → user (follow-up)

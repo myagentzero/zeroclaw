@@ -53,13 +53,13 @@ pub fn default_model_fallback_for_provider(provider_name: Option<&str>) -> &'sta
 
     match canonical_provider.as_str() {
         "anthropic" => "claude-sonnet-5",
-        "openai" => "gpt-5.2",
-        "openai-codex" => "gpt-5-codex",
+        "openai" => "gpt-5.4",
+        "openai-codex" => "gpt-5.3-codex",
         "venice" => "zai-org-glm-5",
-        "groq" => "llama-3.3-70b-versatile",
+        "groq" => "openai/gpt-oss-120b",
         "mistral" => "mistral-large-latest",
-        "deepseek" => "deepseek-chat",
-        "xai" => "grok-4-1-fast-reasoning",
+        "deepseek" => "deepseek-v4-flash",
+        "xai" => "grok-4.5",
         "perplexity" => "sonar-pro",
         "fireworks" => "accounts/fireworks/models/llama-v3p3-70b-instruct",
         "novita" => "minimax/minimax-m2.5",
@@ -69,21 +69,21 @@ pub fn default_model_fallback_for_provider(provider_name: Option<&str>) -> &'sta
         "cerebras" => "llama3.1-70b",
         "sambanova" => "Meta-Llama-3.3-70B-Instruct",
         "replicate" => "meta/meta-llama-3-70b-instruct",
-        "moonshot" => "kimi-k2.5",
+        "moonshot" => "kimi-k2.6",
         "stepfun" => "step-3.5-flash",
         "hunyuan" => "hunyuan-t1-latest",
         "glm" | "zai" => "glm-5",
         "minimax" => "MiniMax-M2.5",
         "qwen" => "qwen-plus",
-        "volcengine" => "doubao-1-5-pro-32k-250115",
-        "siliconflow" => "Pro/zai-org/GLM-4.7",
+        "volcengine" => "doubao-seed-1-6-250615",
+        "siliconflow" => "Pro/zai-org/GLM-5",
         "qwen-code" => "qwen3-coder-plus",
-        "ollama" => "llama3.2",
+        "ollama" => "llama3.3",
         "llamacpp" => "ggml-org/gpt-oss-20b-GGUF",
         "sglang" | "vllm" | "osaurus" | "copilot" => "default",
-        "gemini" => "gemini-2.5-pro",
+        "gemini" => "gemini-3-pro-preview",
         "kimi-code" => "kimi-for-coding",
-        "bedrock" => "anthropic.claude-sonnet-4-5-20250929-v1:0",
+        "bedrock" => "anthropic.claude-sonnet-5",
         "nvidia" => "meta/llama-3.3-70b-instruct",
         _ => DEFAULT_MODEL_FALLBACK,
     }
@@ -10503,13 +10503,13 @@ provider_api = "not-a-real-mode"
     #[test]
     async fn resolve_default_model_id_uses_provider_specific_fallback() {
         let openai = resolve_default_model_id(None, Some("openai"));
-        assert_eq!(openai, "gpt-5.2");
+        assert_eq!(openai, "gpt-5.4");
 
         let stepfun = resolve_default_model_id(None, Some("stepfun"));
         assert_eq!(stepfun, "step-3.5-flash");
 
         let bedrock = resolve_default_model_id(None, Some("aws-bedrock"));
-        assert_eq!(bedrock, "anthropic.claude-sonnet-4-5-20250929-v1:0");
+        assert_eq!(bedrock, "anthropic.claude-sonnet-5");
 
         let ai21 = resolve_default_model_id(None, Some("ai21"));
         assert_eq!(ai21, "jamba-1.5-large");
@@ -10521,7 +10521,7 @@ provider_api = "not-a-real-mode"
         assert_eq!(qwen_coding_plan, "qwen3-coder-plus");
 
         let google_alias = resolve_default_model_id(None, Some("google-gemini"));
-        assert_eq!(google_alias, "gemini-2.5-pro");
+        assert_eq!(google_alias, "gemini-3-pro-preview");
 
         let step_alias = resolve_default_model_id(None, Some("step"));
         assert_eq!(step_alias, DEFAULT_MODEL_FALLBACK);

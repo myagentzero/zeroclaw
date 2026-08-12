@@ -1168,6 +1168,24 @@ pub(crate) fn create_provider_with_url_and_options(
     .map(|v| String::from_utf8(v.into_bytes()).unwrap_or_default());
     #[allow(clippy::option_as_ref_deref)]
     let key = resolved_credential.as_ref().map(String::as_str);
+    let provider = build_named_provider(name, key, api_url, options, qwen_oauth_context.as_ref())?;
+    provider.set_reasoning_level(options.reasoning_level.clone());
+    Ok(provider)
+}
+
+/// Match `name` to a concrete provider implementation.
+///
+/// Split out from `create_provider_with_url_and_options` so that provider
+/// construction and the `provider.reasoning_level` override (applied
+/// uniformly afterward via `Provider::set_reasoning_level`) stay separate.
+#[allow(clippy::too_many_lines)]
+fn build_named_provider(
+    name: &str,
+    key: Option<&str>,
+    api_url: Option<&str>,
+    options: &ProviderRuntimeOptions,
+    qwen_oauth_context: Option<&QwenOauthProviderContext>,
+) -> anyhow::Result<Box<dyn Provider>> {
     match name {
         "openai-codex" | "openai_codex" | "codex" => {
             let mut codex_options = options.clone();
@@ -1282,11 +1300,7 @@ pub(crate) fn create_provider_with_url_and_options(
                 .map(str::trim)
                 .filter(|value| !value.is_empty())
                 .map(ToString::to_string)
-                .or_else(|| {
-                    qwen_oauth_context
-                        .as_ref()
-                        .and_then(|context| context.base_url.clone())
-                })
+                .or_else(|| qwen_oauth_context.and_then(|context| context.base_url.clone()))
                 .unwrap_or_else(|| QWEN_OAUTH_BASE_FALLBACK_URL.to_string());
 
             Ok(Box::new(

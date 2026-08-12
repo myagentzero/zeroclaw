@@ -159,6 +159,8 @@ Runtime in-chat commands (Discord/Slack while channel server is running):
 - `/new`
 - `/fallback-enabled`
 - `/fallback-enabled true|false`
+- `/effort` (also `/reasoning-effort`, `/reasoning-level`)
+- `/effort minimal|low|medium|high|xhigh` (or `/effort off` to clear the override)
 - `/command` (also `command`, `commands`, `help`)
 
 Channel runtime also watches `config.toml` and hot-applies updates to:
@@ -167,6 +169,7 @@ Channel runtime also watches `config.toml` and hot-applies updates to:
 - `default_temperature`
 - `api_key` / `api_url` (for the default provider)
 - `reliability.*` provider retry/fallback settings
+- `provider.reasoning_level`
 
 `add/remove` currently route you back to managed setup/manual config paths (not full declarative mutators yet).
 

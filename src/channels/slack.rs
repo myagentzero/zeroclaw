@@ -150,6 +150,7 @@ fn unicode_emoji_to_slack_name(emoji: &str) -> &str {
         // Security / reliability runtime commands
         "\u{1F512}" => "lock",   // 🔒
         "\u{1F501}" => "repeat", // 🔁
+        "\u{1F9E0}" => "brain",  // 🧠
         _ => {
             tracing::warn!(
                 "Slack: no shortcode mapping for emoji {emoji:?}; reactions.add will likely fail"
@@ -357,6 +358,14 @@ fn slack_default_ack_config() -> &'static crate::config::AckReactionConfig {
             AckReactionRuleConfig {
                 contains_any: vec!["fallback-enabled".into()],
                 emojis: vec!["🔁".into()],
+                ..AckReactionRuleConfig::default()
+            },
+            AckReactionRuleConfig {
+                regex_any: vec![
+                    r"(?i)^[+/](effort|reasoning-effort|reasoning-level)(\s+\S+)?$".into(),
+                    r"(?i)^(set\s+)?(reasoning\s+(effort|level)|effort)(\s+to)?(\s+\S+)?$".into(),
+                ],
+                emojis: vec!["🧠".into()],
                 ..AckReactionRuleConfig::default()
             },
             AckReactionRuleConfig {
@@ -3986,6 +3995,34 @@ mod tests {
             matches!(picked.as_deref(), Some("🎫") | Some("📋") | Some("🔧")),
             "expected ITSM ack reaction, got {picked:?}"
         );
+    }
+
+    #[test]
+    fn default_ack_config_uses_brain_icon_for_effort_command() {
+        use crate::channels::ack_reaction::{
+            AckReactionContext, AckReactionContextChatType, select_ack_reaction,
+        };
+
+        for text in [
+            "/effort high",
+            "+effort",
+            "effort high",
+            "set effort to xhigh",
+            "reasoning effort medium",
+        ] {
+            let ctx = AckReactionContext {
+                text,
+                sender_id: Some("U123"),
+                chat_id: Some("C123"),
+                chat_type: AckReactionContextChatType::Group,
+                locale_hint: Some("en_us"),
+            };
+
+            let picked =
+                select_ack_reaction(Some(slack_default_ack_config()), SLACK_ACK_REACTIONS, &ctx);
+
+            assert_eq!(picked.as_deref(), Some("🧠"), "text={text:?}");
+        }
     }
 
     #[test]
