@@ -35,15 +35,18 @@ cli = true
 
 Each channel is enabled by creating its sub-table (for example, `[channels_config.telegram]`).
 
-## In-Chat Runtime Model Switching (Telegram / Discord)
+## In-Chat Runtime Model Switching (Discord / Slack)
 
-When running `agentzero channel start` (or daemon mode), Telegram and Discord now support sender-scoped runtime switching:
+When running `agentzero channel start` (or daemon mode), Discord and Slack support sender-scoped runtime switching:
 
 - `/models` — show available providers and current selection
 - `/models <provider>` — switch provider for the current sender session
 - `/model` — show current model and cached model IDs (if available)
 - `/model <model-id>` — switch model for the current sender session
 - `/new` — clear conversation history and start a fresh session
+- `/fallback-enabled` — show current `reliability.fallback_enabled`
+- `/fallback-enabled true|false` — persist and hot-apply the fallback provider chain toggle
+- `/command` (or `command` / `commands` / `help`) — list available runtime commands
 
 Notes:
 
@@ -51,6 +54,8 @@ Notes:
 - `/new` clears the sender's conversation history without changing provider or model selection.
 - Model cache previews come from `agentzero models refresh --provider <ID>`.
 - These are runtime chat commands, not CLI subcommands.
+- `/fallback-enabled` also accepts `on`/`off`, `yes`/`no`, and `1`/`0`, plus the `+fallback-enabled` prefix form (useful on Slack).
+- On Slack, prefer `+command` if `/command` is claimed by Slack slash commands.
 
 ## Inbound Image Marker Protocol
 

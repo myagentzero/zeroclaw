@@ -163,6 +163,9 @@ enum ChannelRuntimeCommand {
     UnapproveTool(String),
     ListApprovals,
     ResetPairing(String),
+    /// Empty arg shows current status; `true`/`false` persists and hot-applies.
+    SetFallbackEnabled(String),
+    ShowCommands,
 }
 
 const APPROVAL_ALL_TOOLS_ONCE_TOKEN: &str = "__all_tools_once__";
@@ -733,6 +736,8 @@ fn parse_runtime_command(channel_name: &str, content: &str) -> Option<ChannelRun
         "/unapprove" => Some(ChannelRuntimeCommand::UnapproveTool(tail)),
         "/approvals" => Some(ChannelRuntimeCommand::ListApprovals),
         "/reset-pairing" => Some(ChannelRuntimeCommand::ResetPairing(tail)),
+        "/fallback-enabled" => Some(ChannelRuntimeCommand::SetFallbackEnabled(tail)),
+        "/command" | "/commands" | "/help" => Some(ChannelRuntimeCommand::ShowCommands),
         // Provider/model switching remains limited to channels with session routing.
         "/models" if supports_runtime_model_switch(channel_name) => {
             if let Some(provider) = args.first() {
@@ -843,6 +848,18 @@ fn parse_natural_language_runtime_command(content: &str) -> Option<ChannelRuntim
     }
     if let Some(code) = extract_runtime_tail_token(&lower, &["reset-pairing "]) {
         return Some(ChannelRuntimeCommand::ResetPairing(code));
+    }
+    if let Some(enabled) = extract_runtime_tail_token(&lower, &["fallback-enabled "]) {
+        return Some(ChannelRuntimeCommand::SetFallbackEnabled(enabled));
+    }
+    if matches!(lower.as_str(), "fallback-enabled") {
+        return Some(ChannelRuntimeCommand::SetFallbackEnabled(String::new()));
+    }
+    if matches!(
+        lower.as_str(),
+        "command" | "commands" | "help" | "show commands" | "list commands"
+    ) {
+        return Some(ChannelRuntimeCommand::ShowCommands);
     }
     None
 }
@@ -1237,6 +1254,39 @@ async fn persist_pairing_reset(ctx: &ChannelRuntimeContext) -> Result<Option<Pat
     // Live reset keeps the new code in PairingGuard only. `gateway.pairing_code` is
     // reserved for `--new-pairing` and is consumed on process startup.
     parsed.gateway.pairing_code = None;
+    parsed.save().await?;
+
+    Ok(Some(config_path))
+}
+
+fn parse_fallback_enabled_arg(raw: &str) -> Result<bool, String> {
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "true" | "on" | "1" | "yes" => Ok(true),
+        "false" | "off" | "0" | "no" => Ok(false),
+        _ => Err(
+            "Usage: `/fallback-enabled true|false` (also accepts on/off, yes/no, 1/0). \
+Leave empty to show the current value."
+                .to_string(),
+        ),
+    }
+}
+
+async fn persist_fallback_enabled(
+    ctx: &ChannelRuntimeContext,
+    enabled: bool,
+) -> Result<Option<PathBuf>> {
+    let Some(config_path) = runtime_config_path(ctx) else {
+        return Ok(None);
+    };
+
+    let contents = tokio::fs::read_to_string(&config_path)
+        .await
+        .with_context(|| format!("Failed to read {}", config_path.display()))?;
+    let mut parsed: Config = toml::from_str(&contents)
+        .with_context(|| format!("Failed to parse {}", config_path.display()))?;
+    parsed.config_path = config_path.clone();
+
+    parsed.reliability.fallback_enabled = enabled;
     parsed.save().await?;
 
     Ok(Some(config_path))
@@ -2105,6 +2155,48 @@ fn build_providers_help_response(current: &ChannelRouteSelection) -> String {
     response
 }
 
+fn build_runtime_commands_help_response(channel_name: &str) -> String {
+    let mut response = String::from("Available runtime commands:\n\n");
+
+    response.push_str("Session\n");
+    response.push_str("- `/new` or `/clear` — clear conversation history\n");
+    response.push_str("- `/command` or `command` — show this help\n");
+
+    if supports_runtime_model_switch(channel_name) {
+        response.push_str("\nProvider / model\n");
+        response.push_str("- `/models` — list providers and current selection\n");
+        response.push_str("- `/models <provider>` — switch provider for this sender\n");
+        response.push_str("- `/model` — show current model\n");
+        response.push_str("- `/model <model-id>` — switch model for this sender\n");
+    }
+
+    response.push_str("\nApprovals\n");
+    response.push_str("- `/approve-request <tool>` — request tool approval\n");
+    response.push_str("- `/approve-all-once` — one-time all-tools bypass request\n");
+    response.push_str("- `/approve-confirm <request-id>` — confirm a pending request\n");
+    response.push_str("- `/approve-allow <request-id>` — approve a pending request\n");
+    response.push_str("- `/approve-deny <request-id>` — deny a pending request\n");
+    response.push_str("- `/approve-pending` — list pending approval requests\n");
+    response.push_str("- `/approve <tool>` — persist tool approval\n");
+    response.push_str("- `/unapprove <tool>` — revoke tool approval\n");
+    response.push_str("- `/approvals` — show approval state\n");
+
+    response.push_str("\nReliability / gateway\n");
+    response.push_str("- `/fallback-enabled` — show `reliability.fallback_enabled`\n");
+    response.push_str(
+        "- `/fallback-enabled true|false` — persist and hot-apply fallback chain toggle\n",
+    );
+    response
+        .push_str("- `/reset-pairing <6-digit-code>` — revoke tokens and set a new pairing code\n");
+
+    response.push_str("\nTips\n");
+    response
+        .push_str("- Use `+` instead of `/` if slash commands conflict (e.g. Slack): `+command`\n");
+    response.push_str("- Natural language forms also work for several commands (e.g. `fallback-enabled true`, `approve tool shell`)\n");
+
+    response
+}
+
 async fn handle_runtime_command_if_needed(
     ctx: &ChannelRuntimeContext,
     msg: &traits::ChannelMessage,
@@ -2297,6 +2389,7 @@ async fn handle_runtime_command_if_needed(
     }
 
     let response = match command {
+        ChannelRuntimeCommand::ShowCommands => build_runtime_commands_help_response(source_channel),
         ChannelRuntimeCommand::ShowProviders => build_providers_help_response(&current),
         ChannelRuntimeCommand::SetProvider(raw_provider) => {
             match resolve_provider_alias(&raw_provider) {
@@ -2784,6 +2877,45 @@ async fn handle_runtime_command_if_needed(
                 }
             } else {
                 "Gateway pairing is not available in this mode (channels-only).".to_string()
+            }
+        }
+        ChannelRuntimeCommand::SetFallbackEnabled(raw_enabled) => {
+            let raw_enabled = raw_enabled.trim();
+            if raw_enabled.is_empty() {
+                let current = runtime_defaults_snapshot(ctx).reliability.fallback_enabled;
+                format!(
+                    "`reliability.fallback_enabled` is currently `{current}`.\n\
+Usage: `/fallback-enabled true|false`"
+                )
+            } else {
+                match parse_fallback_enabled_arg(raw_enabled) {
+                    Ok(enabled) => match persist_fallback_enabled(ctx, enabled).await {
+                        Ok(Some(config_path)) => {
+                            if let Err(err) = maybe_apply_runtime_config_update(ctx).await {
+                                format!(
+                                    "Persisted `reliability.fallback_enabled = {enabled}` to `{}`, \
+but failed to hot-apply runtime providers: {err}. \
+The change will apply on the next inbound message or process restart.",
+                                    config_path.display()
+                                )
+                            } else {
+                                format!(
+                                    "`reliability.fallback_enabled` set to `{enabled}` and hot-applied.\n\
+Config path: `{}`.",
+                                    config_path.display()
+                                )
+                            }
+                        }
+                        Ok(None) => {
+                            "Runtime config path was not available; could not update `reliability.fallback_enabled`."
+                                .to_string()
+                        }
+                        Err(err) => {
+                            format!("Failed to persist `reliability.fallback_enabled`: {err}")
+                        }
+                    },
+                    Err(usage) => usage,
+                }
             }
         }
         ChannelRuntimeCommand::ApprovePendingRequest(request_id) => {
@@ -5339,6 +5471,74 @@ mod tests {
     }
 
     #[test]
+    fn parse_runtime_command_recognizes_show_commands() {
+        assert_eq!(
+            parse_runtime_command("slack", "/command"),
+            Some(ChannelRuntimeCommand::ShowCommands)
+        );
+        assert_eq!(
+            parse_runtime_command("slack", "/commands"),
+            Some(ChannelRuntimeCommand::ShowCommands)
+        );
+        assert_eq!(
+            parse_runtime_command("slack", "+help"),
+            Some(ChannelRuntimeCommand::ShowCommands)
+        );
+        assert_eq!(
+            parse_runtime_command("slack", "command"),
+            Some(ChannelRuntimeCommand::ShowCommands)
+        );
+        assert_eq!(
+            parse_runtime_command("slack", "list commands"),
+            Some(ChannelRuntimeCommand::ShowCommands)
+        );
+    }
+
+    #[test]
+    fn build_runtime_commands_help_includes_model_switch_for_slack() {
+        let help = build_runtime_commands_help_response("slack");
+        assert!(help.contains("`/models`"));
+        assert!(help.contains("`/fallback-enabled`"));
+        assert!(help.contains("`/reset-pairing"));
+        assert!(help.contains("`/command`"));
+    }
+
+    #[test]
+    fn parse_runtime_command_recognizes_fallback_enabled() {
+        assert_eq!(
+            parse_runtime_command("slack", "/fallback-enabled true"),
+            Some(ChannelRuntimeCommand::SetFallbackEnabled(
+                "true".to_string()
+            ))
+        );
+        assert_eq!(
+            parse_runtime_command("slack", "/fallback-enabled false"),
+            Some(ChannelRuntimeCommand::SetFallbackEnabled(
+                "false".to_string()
+            ))
+        );
+        assert_eq!(
+            parse_runtime_command("slack", "+fallback-enabled on"),
+            Some(ChannelRuntimeCommand::SetFallbackEnabled("on".to_string()))
+        );
+        assert_eq!(
+            parse_runtime_command("slack", "/fallback-enabled"),
+            Some(ChannelRuntimeCommand::SetFallbackEnabled(String::new()))
+        );
+    }
+
+    #[test]
+    fn parse_fallback_enabled_arg_accepts_common_bool_forms() {
+        assert_eq!(parse_fallback_enabled_arg("true"), Ok(true));
+        assert_eq!(parse_fallback_enabled_arg("FALSE"), Ok(false));
+        assert_eq!(parse_fallback_enabled_arg("on"), Ok(true));
+        assert_eq!(parse_fallback_enabled_arg("off"), Ok(false));
+        assert_eq!(parse_fallback_enabled_arg("1"), Ok(true));
+        assert_eq!(parse_fallback_enabled_arg("0"), Ok(false));
+        assert!(parse_fallback_enabled_arg("maybe").is_err());
+    }
+
+    #[test]
     fn parse_runtime_command_supports_natural_language_approval_intents() {
         assert_eq!(
             parse_runtime_command("slack", "approve tool shell"),
@@ -5371,6 +5571,20 @@ mod tests {
         assert_eq!(
             parse_runtime_command("slack", "reset-pairing 123456"),
             Some(ChannelRuntimeCommand::ResetPairing("123456".to_string()))
+        );
+    }
+
+    #[test]
+    fn parse_runtime_command_supports_natural_language_fallback_enabled() {
+        assert_eq!(
+            parse_runtime_command("slack", "fallback-enabled true"),
+            Some(ChannelRuntimeCommand::SetFallbackEnabled(
+                "true".to_string()
+            ))
+        );
+        assert_eq!(
+            parse_runtime_command("slack", "fallback-enabled"),
+            Some(ChannelRuntimeCommand::SetFallbackEnabled(String::new()))
         );
     }
 
@@ -9627,6 +9841,77 @@ BTC is currently around $65,000 based on latest tool output."#
             "live pairing code must stay in PairingGuard, not config.toml"
         );
         assert_eq!(guard.pairing_code(), Some("123456".to_string()));
+    }
+
+    #[tokio::test]
+    async fn persist_fallback_enabled_updates_reliability_toggle() {
+        let temp = tempfile::TempDir::new().expect("temp dir");
+        let config_path = temp.path().join("config.toml");
+        let workspace_dir = temp.path().join("workspace");
+        std::fs::create_dir_all(&workspace_dir).expect("workspace dir");
+
+        let mut cfg = Config::default();
+        cfg.config_path = config_path.clone();
+        cfg.workspace_dir = workspace_dir.clone();
+        cfg.reliability.fallback_enabled = false;
+        cfg.save().await.expect("save initial config");
+
+        let runtime_ctx = Arc::new(ChannelRuntimeContext {
+            channels_by_name: Arc::new(HashMap::new()),
+            provider: Arc::new(ModelCaptureProvider::default()),
+            default_provider: Arc::new("test-provider".to_string()),
+            memory: Arc::new(NoopMemory),
+            tools_registry: Arc::new(vec![]),
+            observer: Arc::new(NoopObserver),
+            system_prompt: Arc::new("test-system-prompt".to_string()),
+            model: Arc::new("test-model".to_string()),
+            temperature: 0.0,
+            auto_save_memory: false,
+            max_tool_iterations: 5,
+            max_history_messages: 50,
+            min_relevance_score: 0.0,
+            conversation_histories: Arc::new(Mutex::new(HashMap::new())),
+            conversation_locks: Default::default(),
+            session_config: crate::config::AgentSessionConfig::default(),
+            session_manager: None,
+            provider_cache: Arc::new(Mutex::new(HashMap::new())),
+            route_overrides: Arc::new(Mutex::new(HashMap::new())),
+            api_key: None,
+            api_url: None,
+            reliability: Arc::new(crate::config::ReliabilityConfig::default()),
+            provider_runtime_options: providers::ProviderRuntimeOptions {
+                agentzero_dir: Some(temp.path().to_path_buf()),
+                ..providers::ProviderRuntimeOptions::default()
+            },
+            workspace_dir: Arc::new(workspace_dir),
+            message_timeout_secs: CHANNEL_MESSAGE_TIMEOUT_SECS,
+            interrupt_on_new_message: false,
+            multimodal: crate::config::MultimodalConfig::default(),
+            hooks: None,
+            non_cli_excluded_tools: Arc::new(Mutex::new(Vec::new())),
+            query_classification: crate::config::QueryClassificationConfig::default(),
+            model_routes: Vec::new(),
+            approval_manager: Arc::new(ApprovalManager::from_config(
+                &crate::config::AutonomyConfig::default(),
+            )),
+            safety_heartbeat: None,
+            startup_perplexity_filter: crate::config::PerplexityFilterConfig::default(),
+            gateway_pairing: None,
+            #[cfg(feature = "skill-creation")]
+            skill_creation: crate::config::SkillCreationConfig::default(),
+            timezone_override: None,
+        });
+
+        persist_fallback_enabled(runtime_ctx.as_ref(), true)
+            .await
+            .expect("persist fallback_enabled")
+            .expect("config path");
+
+        let persisted = tokio::fs::read_to_string(&config_path)
+            .await
+            .expect("read config");
+        let parsed: Config = toml::from_str(&persisted).expect("parse config");
+        assert!(parsed.reliability.fallback_enabled);
     }
 
     #[tokio::test]

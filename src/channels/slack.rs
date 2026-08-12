@@ -147,8 +147,9 @@ fn unicode_emoji_to_slack_name(emoji: &str) -> &str {
         "\u{1F3AB}" => "ticket",    // 🎫
         "\u{1F4CB}" => "clipboard", // 📋
         "\u{1F527}" => "wrench",    // 🔧
-        // Security
-        "\u{1F512}" => "lock", // 🔒
+        // Security / reliability runtime commands
+        "\u{1F512}" => "lock",   // 🔒
+        "\u{1F501}" => "repeat", // 🔁
         _ => {
             tracing::warn!(
                 "Slack: no shortcode mapping for emoji {emoji:?}; reactions.add will likely fail"
@@ -351,6 +352,19 @@ fn slack_default_ack_config() -> &'static crate::config::AckReactionConfig {
             AckReactionRuleConfig {
                 contains_any: vec!["reset-pairing".into()],
                 emojis: vec!["🔒".into()],
+                ..AckReactionRuleConfig::default()
+            },
+            AckReactionRuleConfig {
+                contains_any: vec!["fallback-enabled".into()],
+                emojis: vec!["🔁".into()],
+                ..AckReactionRuleConfig::default()
+            },
+            AckReactionRuleConfig {
+                regex_any: vec![
+                    r"(?i)^[+/]?(command|commands|help)$".into(),
+                    r"(?i)^(show|list)\s+commands$".into(),
+                ],
+                emojis: vec!["📋".into()],
                 ..AckReactionRuleConfig::default()
             },
         ],

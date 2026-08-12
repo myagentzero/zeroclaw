@@ -15,7 +15,7 @@ use tokio::fs::{self, OpenOptions};
 use tokio::io::AsyncWriteExt;
 
 /// Default fallback model when none is configured.
-pub const DEFAULT_MODEL_FALLBACK: &str = "anthropic/claude-sonnet-4.6";
+pub const DEFAULT_MODEL_FALLBACK: &str = "anthropic/claude-sonnet-5";
 
 fn canonical_provider_for_model_defaults(provider_name: &str) -> String {
     match provider_name {
@@ -52,7 +52,7 @@ pub fn default_model_fallback_for_provider(provider_name: Option<&str>) -> &'sta
     };
 
     match canonical_provider.as_str() {
-        "anthropic" => "claude-sonnet-4-5-20250929",
+        "anthropic" => "claude-sonnet-5",
         "openai" => "gpt-5.2",
         "openai-codex" => "gpt-5-codex",
         "venice" => "zai-org-glm-5",
@@ -135,7 +135,7 @@ static RUNTIME_PROXY_CONFIG: OnceLock<RwLock<ProxyConfig>> = OnceLock::new();
 static RUNTIME_PROXY_CLIENT_CACHE: OnceLock<RwLock<HashMap<String, reqwest::Client>>> =
     OnceLock::new();
 const DEFAULT_PROVIDER_NAME: &str = "openrouter";
-const DEFAULT_MODEL_NAME: &str = "anthropic/claude-sonnet-4.6";
+const DEFAULT_MODEL_NAME: &str = "anthropic/claude-sonnet-5";
 
 // ── Top-level config ──────────────────────────────────────────────
 

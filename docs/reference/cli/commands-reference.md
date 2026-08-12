@@ -150,20 +150,23 @@ Notes:
 - `agentzero channel add <type> <json>`
 - `agentzero channel remove <name>`
 
-Runtime in-chat commands (Telegram/Discord while channel server is running):
+Runtime in-chat commands (Discord/Slack while channel server is running):
 
 - `/models`
 - `/models <provider>`
 - `/model`
 - `/model <model-id>`
 - `/new`
+- `/fallback-enabled`
+- `/fallback-enabled true|false`
+- `/command` (also `command`, `commands`, `help`)
 
 Channel runtime also watches `config.toml` and hot-applies updates to:
 - `default_provider`
 - `default_model`
 - `default_temperature`
 - `api_key` / `api_url` (for the default provider)
-- `reliability.*` provider retry settings
+- `reliability.*` provider retry/fallback settings
 
 `add/remove` currently route you back to managed setup/manual config paths (not full declarative mutators yet).
 
