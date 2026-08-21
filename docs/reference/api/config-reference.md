@@ -546,10 +546,14 @@ allowed_roots = ["~/Desktop/projects", "/opt/shared-repo"]
 | `embedding_dimensions` | `1536` | expected vector size for selected embedding model |
 | `vector_weight` | `0.7` | hybrid ranking vector weight |
 | `keyword_weight` | `0.3` | hybrid ranking keyword weight |
+| `min_relevance_score` | `0.4` | minimum score after decay/Core boost for a memory to be injected into context |
 
 Notes:
 
 - Memory context injection ignores legacy `assistant_resp*` auto-save keys to prevent old model-authored summaries from being treated as facts.
+- After retrieval, context ranking applies a 7-day exponential half-life to non-Core scores. Core scores are never time-decayed.
+- Core memories get a **+0.3 ranking boost for the first 7 days** after their RFC3339 timestamp. After that they compete on raw retrieval score (still evergreen). Unparseable timestamps get no boost.
+- `memory_recall` searches and lists stored rows as-is; it does not apply time decay or the Core recency boost.
 
 ## `[[model_routes]]` and `[[embedding_routes]]`
 

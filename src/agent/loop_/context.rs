@@ -1,12 +1,9 @@
 use crate::config::Config;
-use crate::memory::{self, Memory, MemoryCategory, decay, retrieval};
+use crate::memory::{self, Memory, decay, retrieval};
 use std::fmt::Write;
 
 /// Time-decay half-life (days) for context recall.
 const CONTEXT_DECAY_HALF_LIFE_DAYS: f64 = 7.0;
-
-/// Score boost for `Core` memories.
-const CORE_CATEGORY_SCORE_BOOST: f64 = 0.3;
 
 /// Max memory entries in context.
 const CONTEXT_ENTRY_LIMIT: usize = 5;
@@ -16,8 +13,8 @@ const RECALL_OVER_FETCH_FACTOR: usize = 2;
 
 /// Build memory context for the current message.
 ///
-/// Uses enhanced recall, applies time decay + Core boost, and filters
-/// entries below `min_relevance_score`.
+/// Uses enhanced recall, applies time decay + a 7-day Core recency boost,
+/// and filters entries below `min_relevance_score`.
 pub(super) async fn build_context(
     mem: &dyn Memory,
     user_msg: &str,
@@ -38,17 +35,14 @@ pub(super) async fn build_context(
         // Older non-Core memories decay.
         decay::apply_time_decay(&mut entries, CONTEXT_DECAY_HALF_LIFE_DAYS);
 
-        // Boost Core, then filter by relevance.
+        // Boost recent Core, then filter by relevance.
         let mut scored: Vec<_> = entries
             .iter()
             .filter(|e| !memory::is_assistant_autosave_key(&e.key))
             .filter_map(|e| {
                 let base = e.score.unwrap_or(min_relevance_score);
-                let boosted = if e.category == MemoryCategory::Core {
-                    (base + CORE_CATEGORY_SCORE_BOOST).min(1.0)
-                } else {
-                    base
-                };
+                let boosted =
+                    (base + decay::core_recency_boost(e, decay::CORE_BOOST_WINDOW_DAYS)).min(1.0);
                 if boosted >= min_relevance_score {
                     Some((e, boosted))
                 } else {
@@ -172,7 +166,16 @@ mod tests {
     use super::*;
     use crate::memory::{Memory, MemoryCategory, MemoryEntry};
     use async_trait::async_trait;
+    use chrono::Utc;
     use std::sync::Arc;
+
+    fn recent_rfc3339() -> String {
+        Utc::now().to_rfc3339()
+    }
+
+    fn days_ago_rfc3339(days: i64) -> String {
+        (Utc::now() - chrono::Duration::days(days)).to_rfc3339()
+    }
 
     struct MockMemory {
         entries: Arc<Vec<MemoryEntry>>,
@@ -237,7 +240,7 @@ mod tests {
                     key: "conv_note".into(),
                     content: "small talk".into(),
                     category: MemoryCategory::Conversation,
-                    timestamp: "now".into(),
+                    timestamp: recent_rfc3339(),
                     session_id: None,
                     score: Some(0.6),
                 },
@@ -246,7 +249,7 @@ mod tests {
                     key: "core_rule".into(),
                     content: "always provide tests".into(),
                     category: MemoryCategory::Core,
-                    timestamp: "now".into(),
+                    timestamp: recent_rfc3339(),
                     session_id: None,
                     score: Some(0.2),
                 },
@@ -270,6 +273,27 @@ mod tests {
         assert!(
             !context.contains("conv_low"),
             "low-score non-core should be filtered"
+        );
+    }
+
+    #[tokio::test]
+    async fn build_context_does_not_boost_core_older_than_seven_days() {
+        let memory = MockMemory {
+            entries: Arc::new(vec![MemoryEntry {
+                id: "1".into(),
+                key: "old_core".into(),
+                content: "stale preference".into(),
+                category: MemoryCategory::Core,
+                timestamp: days_ago_rfc3339(8),
+                session_id: None,
+                score: Some(0.2),
+            }]),
+        };
+
+        let context = build_context(&memory, "test query", 0.4, None).await;
+        assert!(
+            !context.contains("old_core"),
+            "core older than 7 days should not get the recency boost: {context}"
         );
     }
 

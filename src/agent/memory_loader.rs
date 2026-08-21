@@ -1,13 +1,9 @@
-use crate::memory::{self, Memory, MemoryCategory, decay, retrieval};
+use crate::memory::{self, Memory, decay, retrieval};
 use async_trait::async_trait;
 use std::fmt::Write;
 
 /// Default half-life (days) for time decay in memory loading.
 const LOADER_DECAY_HALF_LIFE_DAYS: f64 = 7.0;
-
-/// Score boost applied to `Core` category memories so durable facts and
-/// preferences surface even when keyword/semantic similarity is moderate.
-const CORE_CATEGORY_SCORE_BOOST: f64 = 0.3;
 
 /// Over-fetch factor: retrieve more candidates than the output limit so
 /// that Core boost and re-ranking can select the best subset.
@@ -60,17 +56,14 @@ impl MemoryLoader for DefaultMemoryLoader {
         // Apply time decay: older non-Core memories score lower.
         decay::apply_time_decay(&mut entries, LOADER_DECAY_HALF_LIFE_DAYS);
 
-        // Apply Core category boost and filter by minimum relevance.
+        // Apply 7-day Core recency boost and filter by minimum relevance.
         let mut scored: Vec<_> = entries
             .iter()
             .filter(|e| !memory::is_assistant_autosave_key(&e.key))
             .filter_map(|e| {
                 let base = e.score.unwrap_or(self.min_relevance_score);
-                let boosted = if e.category == MemoryCategory::Core {
-                    (base + CORE_CATEGORY_SCORE_BOOST).min(1.0)
-                } else {
-                    base
-                };
+                let boosted =
+                    (base + decay::core_recency_boost(e, decay::CORE_BOOST_WINDOW_DAYS)).min(1.0);
                 if boosted >= self.min_relevance_score {
                     Some((e, boosted))
                 } else {
@@ -100,7 +93,16 @@ impl MemoryLoader for DefaultMemoryLoader {
 mod tests {
     use super::*;
     use crate::memory::{Memory, MemoryCategory, MemoryEntry};
+    use chrono::Utc;
     use std::sync::Arc;
+
+    fn recent_rfc3339() -> String {
+        Utc::now().to_rfc3339()
+    }
+
+    fn days_ago_rfc3339(days: i64) -> String {
+        (Utc::now() - chrono::Duration::days(days)).to_rfc3339()
+    }
 
     struct MockMemory;
     struct MockMemoryWithEntries {
@@ -319,7 +321,7 @@ mod tests {
                     key: "chat_detail".into(),
                     content: "talked about weather".into(),
                     category: MemoryCategory::Conversation,
-                    timestamp: "now".into(),
+                    timestamp: recent_rfc3339(),
                     session_id: None,
                     score: Some(0.6),
                 },
@@ -328,7 +330,7 @@ mod tests {
                     key: "project_rule".into(),
                     content: "always use async/await".into(),
                     category: MemoryCategory::Core,
-                    timestamp: "now".into(),
+                    timestamp: recent_rfc3339(),
                     session_id: None,
                     // Below threshold without boost (0.25 < 0.4),
                     // but above with +0.3 boost (0.55 >= 0.4).
@@ -378,7 +380,7 @@ mod tests {
                     key: "core_pref".into(),
                     content: "user prefers Rust".into(),
                     category: MemoryCategory::Core,
-                    timestamp: "now".into(),
+                    timestamp: recent_rfc3339(),
                     session_id: None,
                     // 0.5 + 0.3 boost = 0.8 > 0.6
                     score: Some(0.5),
@@ -395,6 +397,43 @@ mod tests {
         assert!(
             !context.contains("conv_high"),
             "Conversation should be truncated when limit=1: {context}"
+        );
+    }
+
+    #[tokio::test]
+    async fn core_older_than_seven_days_does_not_receive_boost() {
+        let loader = DefaultMemoryLoader::new(2, 0.4);
+        let memory = MockMemoryWithEntries {
+            entries: Arc::new(vec![
+                MemoryEntry {
+                    id: "1".into(),
+                    key: "chat_detail".into(),
+                    content: "talked about weather".into(),
+                    category: MemoryCategory::Conversation,
+                    timestamp: "now".into(),
+                    session_id: None,
+                    score: Some(0.6),
+                },
+                MemoryEntry {
+                    id: "2".into(),
+                    key: "old_rule".into(),
+                    content: "always use async/await".into(),
+                    category: MemoryCategory::Core,
+                    timestamp: days_ago_rfc3339(8),
+                    session_id: None,
+                    score: Some(0.25),
+                },
+            ]),
+        };
+
+        let context = loader.load_context(&memory, "code style").await.unwrap();
+        assert!(
+            context.contains("chat_detail"),
+            "conversation above threshold should remain: {context}"
+        );
+        assert!(
+            !context.contains("old_rule"),
+            "core older than 7 days should not be promoted by boost: {context}"
         );
     }
 

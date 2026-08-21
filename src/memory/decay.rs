@@ -5,6 +5,39 @@ use chrono::{DateTime, Utc};
 /// After this many days, a non-Core memory's score drops to 50%.
 const DEFAULT_HALF_LIFE_DAYS: f64 = 7.0;
 
+/// Days during which `Core` memories receive a ranking boost.
+pub const CORE_BOOST_WINDOW_DAYS: f64 = 7.0;
+
+/// Score added to `Core` memories that are still inside [`CORE_BOOST_WINDOW_DAYS`].
+pub const CORE_CATEGORY_SCORE_BOOST: f64 = 0.3;
+
+fn entry_age_days(entry: &MemoryEntry, now: DateTime<Utc>) -> Option<f64> {
+    let ts = DateTime::parse_from_rfc3339(&entry.timestamp)
+        .ok()?
+        .with_timezone(&Utc);
+    Some(now.signed_duration_since(ts).num_seconds().max(0) as f64 / 86_400.0)
+}
+
+/// Ranking boost for a `Core` memory, or `0.0` if it is ineligible.
+///
+/// Boost applies only while the entry's RFC3339 timestamp is at most
+/// `window_days` old. Non-Core entries, unparseable timestamps, and older
+/// Core entries get no boost. Core scores themselves are never time-decayed.
+pub fn core_recency_boost(entry: &MemoryEntry, window_days: f64) -> f64 {
+    if entry.category != MemoryCategory::Core {
+        return 0.0;
+    }
+    let window = if window_days <= 0.0 {
+        CORE_BOOST_WINDOW_DAYS
+    } else {
+        window_days
+    };
+    match entry_age_days(entry, Utc::now()) {
+        Some(age_days) if age_days <= window => CORE_CATEGORY_SCORE_BOOST,
+        _ => 0.0,
+    }
+}
+
 /// Apply exponential time decay to memory entry scores.
 ///
 /// - `Core` memories are exempt ("evergreen") — their scores are never decayed.
@@ -32,12 +65,9 @@ pub fn apply_time_decay(entries: &mut [MemoryEntry], half_life_days: f64) {
             None => continue,
         };
 
-        let ts = match DateTime::parse_from_rfc3339(&entry.timestamp) {
-            Ok(dt) => dt.with_timezone(&Utc),
-            Err(_) => continue,
+        let Some(age_days) = entry_age_days(entry, now) else {
+            continue;
         };
-
-        let age_days = now.signed_duration_since(ts).num_seconds().max(0) as f64 / 86_400.0;
 
         let decay_factor = (-age_days / half_life * std::f64::consts::LN_2).exp();
         entry.score = Some(score * decay_factor);
@@ -144,5 +174,33 @@ mod tests {
         )];
         apply_time_decay(&mut entries, 7.0);
         assert_eq!(entries[0].score, Some(0.9));
+    }
+
+    #[test]
+    fn recent_core_receives_recency_boost() {
+        let entry = make_entry(MemoryCategory::Core, Some(0.5), &recent_rfc3339());
+        assert!((core_recency_boost(&entry, 7.0) - CORE_CATEGORY_SCORE_BOOST).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn core_older_than_window_receives_no_boost() {
+        let entry = make_entry(MemoryCategory::Core, Some(0.5), &days_ago_rfc3339(8));
+        assert_eq!(core_recency_boost(&entry, 7.0), 0.0);
+    }
+
+    #[test]
+    fn core_at_window_boundary_still_boosted() {
+        let ts =
+            (Utc::now() - chrono::Duration::days(7) + chrono::Duration::minutes(1)).to_rfc3339();
+        let entry = make_entry(MemoryCategory::Core, Some(0.5), &ts);
+        assert!((core_recency_boost(&entry, 7.0) - CORE_CATEGORY_SCORE_BOOST).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn non_core_and_unparseable_receive_no_boost() {
+        let conv = make_entry(MemoryCategory::Conversation, Some(0.5), &recent_rfc3339());
+        let bad = make_entry(MemoryCategory::Core, Some(0.5), "not-a-date");
+        assert_eq!(core_recency_boost(&conv, 7.0), 0.0);
+        assert_eq!(core_recency_boost(&bad, 7.0), 0.0);
     }
 }

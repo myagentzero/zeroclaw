@@ -469,6 +469,12 @@ flowchart TB
     class Storage storage
 ```
 
+**Context ranking** (applied in `src/agent/memory_loader.rs` and `src/agent/loop_/context.rs` via `src/memory/decay.rs`):
+
+- Non-Core memories: exponential time decay with a **7-day half-life**.
+- Core memories: scores are never decayed. They receive a **+0.3 ranking boost only for the first 7 days**, then compete on raw retrieval score.
+- Entries below `min_relevance_score` (default `0.4`) are omitted from injected `[Memory context]`. `memory_recall` does not apply this ranking.
+
 ---
 
 ## 9. Provider and Model Routing
